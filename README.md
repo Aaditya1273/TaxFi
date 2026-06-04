@@ -50,24 +50,14 @@ All paid calls go through Coinbase x402 facilitator. Settlement is USDC on Base 
 
 | Layer | Modified Choice |
 | --- | --- |
-| Base Repo | fozagtx/Beru (A2A hiring + dashboard) |
 | Payments | @x402/hono from wgopar/a2a-x402-agent-template |
-| Identity | ERC-8004 NFT via agent0-sdk |
+| Identity | ERC-8004 NFT |
 | Wallet | MetaMask Smart Accounts Kit + Delegation Toolkit |
 | LLM | Venice AI API (replaces OpenRouter) |
-| Backend | Hono on AWS Lambda (Terraform) |
 | Frontend | Next.js 16 with ConnectKit |
 
-## 7. What We Changed from Beru
 
-1. Replaced raw private key with MetaMask Smart Account session
-2. Added `requestExecutionPermissions` flow for USDC daily limit
-3. Swapped OpenRouter for Venice with `VENICE_API_KEY`
-4. Merged standard A2A handler and x402 middleware for compliance
-5. Added ERC-8004 registration on deploy
-6. Built Delegation Treasury UI showing remaining budget and revoke
-
-## 8. Demo Flow (90 seconds)
+## 7. Demo Flow (90 seconds)
 
 1. Connect MetaMask → Upgrade to Smart Account → Grant $3/day
 2. Prompt: "Find 3 cheapest RTX 4090s, keep my query private"
@@ -75,7 +65,7 @@ All paid calls go through Coinbase x402 facilitator. Settlement is USDC on Base 
 4. One agent sub-hires Summarizer, payment tree expands live
 5. Result returns, prompts never logged, user clicks Revoke
 
-## 9. Business Model Beyond Hackathon
+## 8. Business Model Beyond Hackathon
 
 - **Enterprise Tier**: Companies delegate agent budgets with role-based limits and audit trails
 - **Agent App Store**: Developers list specialist agents, earn USDC per call
@@ -83,13 +73,13 @@ All paid calls go through Coinbase x402 facilitator. Settlement is USDC on Base 
 
 This is not a demo. It is the missing merchant layer for x402 and the first real use case for MetaMask delegations.
 
-## 10. Roadmap
+## 9. Roadmap
 
 - Week 1: Ship Base Sepolia mainnet, onboard 10 agent developers
 - Month 1: Add 1Shot API skill registry, launch with Venice fund support
 - Month 3: Enterprise SSO and budget policies
 
-## 11. Team Ask
+## 10. Team Ask
 
 We are building PrivAgent to become the Stripe for AI labor. We are seeking $250k pre-seed to integrate with MetaMask Snaps and expand to Solana via x402.
 
