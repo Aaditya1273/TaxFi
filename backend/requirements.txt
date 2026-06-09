@@ -1,0 +1,37 @@
+# TaxFi Backend Dependencies
+# Core agent system
+aiohttp>=3.9.0
+aiohttp-socks>=0.8.0
+
+# Data processing
+pydantic>=2.0.0
+python-dateutil>=2.8.0
+
+# Web3 / Blockchain
+web3>=7.0.0
+eth-account>=0.12.0
+eth-typing>=5.0.0
+
+# x402 payments
+siwe>=2.0.0
+
+# Venice AI (OpenAI-compatible)
+openai>=1.0.0
+
+# CSV/PDF generation
+reportlab>=4.0.0  # For PDF tax forms
+
+# CLI
+rich>=13.0.0  # Beautiful CLI output
+click>=8.0.0  # CLI framework
+
+# Environment
+python-dotenv>=1.0.0
+
+# Optional: rotki integration
+# rotkehlchen  # Uncomment if using rotki as tax engine
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
