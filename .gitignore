@@ -1,2 +1,9 @@
 .env*
 node_modules
+.venv
+
+.pytest_cache
+
+taxfi-integration
+
+idea.md 
