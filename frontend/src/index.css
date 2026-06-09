@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-gray-950 text-gray-100;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply min-h-screen;
+  }
+
+  /* Gradient text for hero sections */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-taxfi-400 to-harvest-DEFAULT;
+  }
+
+  /* Card styles */
+  .card {
+    @apply bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-2xl p-6
+           hover:border-gray-700 transition-all duration-200;
+  }
+
+  .card-gradient {
+    @apply bg-gradient-to-br from-gray-900 to-gray-900/50 backdrop-blur-sm
+           border border-gray-800 rounded-2xl p-6;
+  }
+
+  /* Glow effects */
+  .glow-blue {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  }
+
+  .glow-green {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.15);
+  }
+
+  /* Animated background */
+  .bg-grid {
+    background-image: linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply bg-taxfi-600 hover:bg-taxfi-500 text-white font-semibold py-3 px-6
+           rounded-xl transition-all duration-200 active:scale-[0.98]
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold py-3 px-6
+           rounded-xl transition-all duration-200 border border-gray-700
+           active:scale-[0.98];
+  }
+
+  .btn-harvest {
+    @apply bg-harvest hover:bg-harvest-dark text-white font-semibold py-3 px-6
+           rounded-xl transition-all duration-200 glow-green active:scale-[0.98];
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-700 rounded-full hover:bg-gray-600;
+  }
+}
+
+@layer components {
+  .stat-card {
+    @apply card flex flex-col gap-2;
+  }
+
+  .stat-label {
+    @apply text-sm text-gray-400 font-medium uppercase tracking-wider;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-white;
+  }
+
+  .opportunity-card {
+    @apply card border-l-4 border-l-hover transition-all duration-200
+           cursor-pointer hover:border-l-hover-dark;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400
+           hover:text-white hover:bg-gray-800/50 transition-all duration-200
+           font-medium;
+  }
+
+  .nav-link-active {
+    @apply nav-link text-taxfi-400 bg-taxfi-500/10 border border-taxfi-500/20;
+  }
+}
