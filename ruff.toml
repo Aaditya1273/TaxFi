@@ -1,0 +1,25 @@
+# Ruff linter configuration for TaxFi backend.
+# See https://docs.astral.sh/ruff/configuration/
+
+target-version = "py314"
+
+# Line length matching project conventions
+line-length = 100
+
+# Select a subset of rules that catch real issues without being noisy
+select = [
+    "F",   # pyflakes: unused imports, undefined names, syntax errors
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "I",   # isort: import ordering
+    "N",   # pep8-naming (catches naming conventions)
+    "UP",  # pyupgrade: modern Python idioms
+]
+
+# Exclude generated / vendored code
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+]
