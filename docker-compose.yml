@@ -1,0 +1,70 @@
+# ── TaxFi — Docker Compose ────────────────────────────────────────────────
+# Orchestrates the full-stack deployment:
+#   backend  — FastAPI server (agents, database, REST + WebSocket API)
+#   frontend — nginx serving the production SPA build, proxying /api → backend
+#
+# Quick start:
+#   docker compose up --build
+#   → Frontend: http://localhost:80
+#   → API:      http://localhost:80/api/health
+#   → Docs:     http://localhost:80/docs
+#
+# Environment variables are loaded from:
+#   1. The `.env` file (create one with your API keys — see .env.example)
+#   2. Shell environment
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Backend ────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: taxfi-backend
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      # Persist SQLite database across restarts
+      - taxfi-data:/data
+    environment:
+      # Override default DB path to the mounted volume
+      - TAXFI_DB_PATH=/data/taxfi.db
+
+      # API keys (set in .env or shell environment)
+      - VENICE_API_KEY=${VENICE_API_KEY:-}
+      - VENICE_WALLET_KEY=${VENICE_WALLET_KEY:-}
+      - COVALENT_API_KEY=${COVALENT_API_KEY:-}
+      - ALCHEMY_API_KEY=${ALCHEMY_API_KEY:-}
+      - ONESHOT_API_KEY=${ONESHOT_API_KEY:-}
+      - ONESHOT_API_SECRET=${ONESHOT_API_SECRET:-}
+      - X402_WALLET_KEY=${X402_WALLET_KEY:-}
+
+      # Configuration overrides
+      - TAXFI_COST_BASIS_METHOD=${TAXFI_COST_BASIS_METHOD:-HIFO}
+      - TAXFI_HARVEST_THRESHOLD=${TAXFI_HARVEST_THRESHOLD:-100.0}
+      - TAXFI_SCAN_INTERVAL=${TAXFI_SCAN_INTERVAL:-3600}
+      - TAXFI_SUPPORTED_CHAINS=${TAXFI_SUPPORTED_CHAINS:-eip155:1,eip155:8453,eip155:42161}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Frontend ───────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: taxfi-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  taxfi-data:
+    driver: local

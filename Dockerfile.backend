@@ -1,0 +1,44 @@
+# ── TaxFi Backend ─────────────────────────────────────────────────────────
+# FastAPI server serving the multi-agent tax pipeline REST API + WebSocket.
+#
+# Single-stage build: Python packages have pre-built wheels for most deps,
+# so we don't need a separate builder stage. The image stays under ~300 MB.
+#
+# Build:     docker build -f Dockerfile.backend -t taxfi-backend .
+# Run:       docker run --rm -p 8000:8000 -v taxfi-data:/data taxfi-backend
+# Compose:   See docker-compose.yml for full orchestration.
+# ──────────────────────────────────────────────────────────────────────────
+
+FROM python:3.14-slim
+
+WORKDIR /app
+
+# Install Python deps (most packages provide wheels, no gcc needed)
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
+    pip install --no-cache-dir \
+        -r requirements.txt \
+        uvicorn[standard] \
+        httpx && \
+    rm -rf /root/.cache/pip
+
+# Copy application code
+COPY backend/ backend/
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 taxfi && \
+    adduser --system --uid 1001 taxfi --ingroup taxfi && \
+    chown -R taxfi:taxfi /app
+
+USER taxfi
+
+# Database persisted to /data (mount a volume here in compose)
+ENV TAXFI_DB_PATH=/data/taxfi.db \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
