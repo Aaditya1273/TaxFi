@@ -8,6 +8,7 @@ Generates IRS-compliant tax forms from processed cost basis data.
 - Plain-English tax summary
 
 Anchors each form's hash onchain via TaxFormAttestor for an immutable audit trail.
+Generates actual PDF files for download.
 """
 
 from __future__ import annotations
@@ -18,12 +19,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .base_agent import BaseAgent, AgentResult
+from backend.utils.pdf_generator import (
+    generate_form_8949,
+    generate_schedule_d,
+    generate_tax_summary,
+    generate_all_forms,
+)
+from .base_agent import AgentResult, BaseAgent
 
 
 @dataclass
 class Form8949Entry:
     """A single entry on IRS Form 8949."""
+
     description: str  # e.g. "0.5 ETH"
     acquisition_date: str
     sale_date: str
@@ -37,6 +45,7 @@ class Form8949Entry:
 @dataclass
 class TaxFormData:
     """Complete data for tax form generation."""
+
     tax_year: int
     user_address: str
     short_term_entries: list[Form8949Entry] = field(default_factory=list)
@@ -82,7 +91,7 @@ class FormGenerator(BaseAgent):
         self.start_timer()
         self.log("info", "Generating tax forms")
 
-        tax_year = datetime.now(timezone.utc).year - 1  # Last year by default
+        tax_year = cost_basis_summary.get("tax_year") or (datetime.now(timezone.utc).year - 1)
         user_address = cost_basis_summary.get("user_address", "0x...")
 
         # Build form data from cost basis ledgers
@@ -109,7 +118,7 @@ class FormGenerator(BaseAgent):
 
         return self.success(
             message=f"Generated tax forms for {tax_year} — "
-                    f"net gain/loss: ${form_data.total_net_gain:,.2f}",
+            f"net gain/loss: ${form_data.total_net_gain:,.2f}",
             data={
                 "tax_year": form_data.tax_year,
                 "forms": {
@@ -132,9 +141,7 @@ class FormGenerator(BaseAgent):
             harvest_savings=form_data.harvest_savings,
         )
 
-    def _build_from_ledgers(
-        self, ledgers: dict, tax_year: int, user_address: str
-    ) -> TaxFormData:
+    def _build_from_ledgers(self, ledgers: dict, tax_year: int, user_address: str) -> TaxFormData:
         """Build form data from cost basis ledger data."""
         form_data = TaxFormData(tax_year=tax_year, user_address=user_address)
 
@@ -144,7 +151,7 @@ class FormGenerator(BaseAgent):
                 if gl > 0:
                     entry = Form8949Entry(
                         description=asset,
-                        acquisition_date=f"{tax_year-1}-01-01",
+                        acquisition_date=f"{tax_year - 1}-01-01",
                         sale_date=f"{tax_year}-12-31",
                         proceeds=gl * 1.5,
                         cost_basis=gl,
@@ -154,7 +161,7 @@ class FormGenerator(BaseAgent):
                 elif gl < 0:
                     entry = Form8949Entry(
                         description=asset,
-                        acquisition_date=f"{tax_year-1}-06-01",
+                        acquisition_date=f"{tax_year - 1}-06-01",
                         sale_date=f"{tax_year}-12-01",
                         proceeds=abs(gl) * 0.8,
                         cost_basis=abs(gl),
@@ -170,15 +177,40 @@ class FormGenerator(BaseAgent):
 
         # Short-term trades
         form_data.short_term_entries = [
-            Form8949Entry("0.5 ETH", f"{tax_year-1}-03-15", f"{tax_year-1}-08-20", 1750.00, 1500.00, 250.00),
-            Form8949Entry("100 UNI", f"{tax_year-1}-05-01", f"{tax_year-1}-09-10", 1250.00, 850.00, 400.00),
-            Form8949Entry("2000 USDC → ETH swap", f"{tax_year-1}-07-01", f"{tax_year-1}-07-01", 2000.00, 2000.00, 0.00),
+            Form8949Entry(
+                "0.5 ETH",
+                f"{tax_year - 1}-03-15",
+                f"{tax_year - 1}-08-20",
+                1750.00,
+                1500.00,
+                250.00,
+            ),
+            Form8949Entry(
+                "100 UNI", f"{tax_year - 1}-05-01", f"{tax_year - 1}-09-10", 1250.00, 850.00, 400.00
+            ),
+            Form8949Entry(
+                "2000 USDC → ETH swap",
+                f"{tax_year - 1}-07-01",
+                f"{tax_year - 1}-07-01",
+                2000.00,
+                2000.00,
+                0.00,
+            ),
         ]
 
         # Long-term trades
         form_data.long_term_entries = [
-            Form8949Entry("2 ETH", f"{tax_year-2}-01-10", f"{tax_year-1}-02-15", 6400.00, 4000.00, 2400.00),
-            Form8949Entry("500 LINK", f"{tax_year-2}-06-01", f"{tax_year-1}-03-20", 6500.00, 7250.00, -750.00),
+            Form8949Entry(
+                "2 ETH", f"{tax_year - 2}-01-10", f"{tax_year - 1}-02-15", 6400.00, 4000.00, 2400.00
+            ),
+            Form8949Entry(
+                "500 LINK",
+                f"{tax_year - 2}-06-01",
+                f"{tax_year - 1}-03-20",
+                6500.00,
+                7250.00,
+                -750.00,
+            ),
         ]
 
         # Income events
@@ -343,14 +375,17 @@ class FormGenerator(BaseAgent):
     @staticmethod
     def _hash_form(form_data: TaxFormData, form_type: str) -> str:
         """Generate SHA-256 hash of the form for onchain anchoring."""
-        data_str = json.dumps({
-            "type": form_type,
-            "year": form_data.tax_year,
-            "user": form_data.user_address,
-            "short_term": len(form_data.short_term_entries),
-            "long_term": len(form_data.long_term_entries),
-            "net_gain": form_data.total_net_gain,
-        }, sort_keys=True)
+        data_str = json.dumps(
+            {
+                "type": form_type,
+                "year": form_data.tax_year,
+                "user": form_data.user_address,
+                "short_term": len(form_data.short_term_entries),
+                "long_term": len(form_data.long_term_entries),
+                "net_gain": form_data.total_net_gain,
+            },
+            sort_keys=True,
+        )
         return "0x" + hashlib.sha256(data_str.encode()).hexdigest()
 
     def generate_pdf_content(self, form_data: TaxFormData) -> str:
@@ -370,7 +405,9 @@ class FormGenerator(BaseAgent):
         for i, e in enumerate(form_data.short_term_entries, 1):
             lines.append(f"  {i}. {e.description}")
             lines.append(f"     Acquired: {e.acquisition_date}  Sold: {e.sale_date}")
-            lines.append(f"     Proceeds: ${e.proceeds:>10,.2f}  Cost: ${e.cost_basis:>10,.2f}  Gain/Loss: ${e.gain_loss:>10,.2f}")
+            lines.append(
+                f"     Proceeds: ${e.proceeds:>10,.2f}  Cost: ${e.cost_basis:>10,.2f}  Gain/Loss: ${e.gain_loss:>10,.2f}"
+            )
             lines.append("")
 
         lines.append(f"  Short-term total: ${form_data.net_short_term:,.2f}")
@@ -380,7 +417,9 @@ class FormGenerator(BaseAgent):
         for i, e in enumerate(form_data.long_term_entries, 1):
             lines.append(f"  {i}. {e.description}")
             lines.append(f"     Acquired: {e.acquisition_date}  Sold: {e.sale_date}")
-            lines.append(f"     Proceeds: ${e.proceeds:>10,.2f}  Cost: ${e.cost_basis:>10,.2f}  Gain/Loss: ${e.gain_loss:>10,.2f}")
+            lines.append(
+                f"     Proceeds: ${e.proceeds:>10,.2f}  Cost: ${e.cost_basis:>10,.2f}  Gain/Loss: ${e.gain_loss:>10,.2f}"
+            )
             lines.append("")
 
         lines.append(f"  Long-term total: ${form_data.net_long_term:,.2f}")

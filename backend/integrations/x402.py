@@ -20,6 +20,8 @@ from typing import Any, Optional
 
 import aiohttp
 
+from backend.utils.retry import circuit_breaker_call, get_circuit_breaker
+
 
 class X402Client:
     """
@@ -58,23 +60,30 @@ class X402Client:
         Returns:
             (status_code, response_data)
         """
+        return await circuit_breaker_call(
+            "x402_payments",
+            f"x402_fetch:{url[:50]}",
+            lambda: self._do_fetch_with_payment(url, max_retries),
+            max_retries=3,
+            base_delay=1.0,
+        )
+
+    async def _do_fetch_with_payment(self, url: str, max_retries: int = 3) -> tuple[int, Any]:
+        """Internal fetch with x402 payment handling."""
         session = await self.get_session()
 
         for attempt in range(max_retries):
             async with session.get(url) as resp:
                 if resp.status == 402:
-                    # Payment required - attempt to pay
                     payment_info = await resp.json()
 
                     if not self.wallet_key:
                         raise Exception("x402 payment required but no wallet configured")
 
-                    # Build and send payment
                     payment_success = await self._send_payment(payment_info)
                     if not payment_success:
                         raise Exception(f"x402 payment failed for {url}")
 
-                    # Retry with payment proof
                     tx_hash = payment_success.get("tx_hash", "")
                     async with session.get(
                         url,

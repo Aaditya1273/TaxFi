@@ -17,6 +17,7 @@ logger = logging.getLogger("taxfi.agents")
 @dataclass
 class AgentResult:
     """Standard result from any agent processing step."""
+
     success: bool
     message: str = ""
     data: Any = None
@@ -68,5 +69,6 @@ class BaseAgent(ABC):
 
     def log(self, level: str, msg: str, **extra) -> None:
         """Log a message with agent context."""
-        log_fn = getattr(logger, level.lower(), logger.info)
+        normalized = "warning" if level.lower() == "warn" else level.lower()
+        log_fn = getattr(logger, normalized, logger.info)
         log_fn(f"[{self.name}] {msg}", extra={"agent": self.name, **extra})

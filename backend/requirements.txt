@@ -2,6 +2,9 @@
 # Core agent system
 aiohttp>=3.9.0
 aiohttp-socks>=0.8.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+aiosqlite>=0.20.0
 
 # Data processing
 pydantic>=2.0.0
@@ -30,6 +33,17 @@ python-dotenv>=1.0.0
 
 # Optional: rotki integration
 # rotkehlchen  # Uncomment if using rotki as tax engine
+
+# Auth & Security
+pyjwt>=2.8.0
+slowapi>=0.1.9
+
+# Monitoring
+prometheus-client>=0.20.0
+structlog>=24.0.0
+
+# PostgreSQL support
+asyncpg>=0.29.0
 
 # Testing
 pytest>=8.0.0

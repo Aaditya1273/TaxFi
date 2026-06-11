@@ -11,13 +11,29 @@ from typing import Any, Optional
 
 import aiohttp
 
-from .base_agent import BaseAgent, AgentResult
+from .base_agent import AgentResult, BaseAgent
 
 CATEGORIES = [
-    "SWAP", "AIRDROP", "STAKING_REWARD", "LP_DEPOSIT", "LP_WITHDRAW",
-    "BRIDGE", "TRANSFER_SELF", "MINT", "BURN", "NFT_BUY", "NFT_SELL",
-    "YIELD_HARVEST", "GOVERNANCE_CLAIM", "INTEREST", "FEE", "GAS",
-    "LIQUIDATION", "BORROW", "REPAY", "OTHER",
+    "SWAP",
+    "AIRDROP",
+    "STAKING_REWARD",
+    "LP_DEPOSIT",
+    "LP_WITHDRAW",
+    "BRIDGE",
+    "TRANSFER_SELF",
+    "MINT",
+    "BURN",
+    "NFT_BUY",
+    "NFT_SELL",
+    "YIELD_HARVEST",
+    "GOVERNANCE_CLAIM",
+    "INTEREST",
+    "FEE",
+    "GAS",
+    "LIQUIDATION",
+    "BORROW",
+    "REPAY",
+    "OTHER",
 ]
 
 CLASSIFICATION_PROMPT_TEMPLATE = """Classify this cryptocurrency transaction for tax purposes.
@@ -95,6 +111,9 @@ class ClassifierAgent(BaseAgent):
         self.start_timer()
         self.log("info", f"Classifying {len(transactions)} transactions")
 
+        # Reset per-run stats so responses are run-scoped, not process-lifetime cumulative.
+        self._stats = {"classified": 0, "failed": 0, "by_category": {}}
+
         classified = []
         for txn in transactions:
             try:
@@ -104,17 +123,23 @@ class ClassifierAgent(BaseAgent):
                 cat = result.get("classification", {}).get("category", "UNKNOWN")
                 self._stats["by_category"][cat] = self._stats["by_category"].get(cat, 0) + 1
             except Exception as e:
-                self.log("error", f"Classification failed for {txn.get('tx_hash', 'unknown')}", error=str(e))
+                self.log(
+                    "error",
+                    f"Classification failed for {txn.get('tx_hash', 'unknown')}",
+                    error=str(e),
+                )
                 self._stats["failed"] += 1
-                classified.append({
-                    **txn,
-                    "classification": {
-                        "category": "OTHER",
-                        "confidence": 0.0,
-                        "reasoning": f"Classification error: {str(e)}",
-                        "taxable": False,
+                classified.append(
+                    {
+                        **txn,
+                        "classification": {
+                            "category": "OTHER",
+                            "confidence": 0.0,
+                            "reasoning": f"Classification error: {str(e)}",
+                            "taxable": False,
+                        },
                     }
-                })
+                )
 
         return self.success(
             message=f"Classified {len(classified)} transactions",
@@ -180,7 +205,7 @@ class ClassifierAgent(BaseAgent):
                 {
                     "role": "system",
                     "content": "You are a crypto tax classification AI. "
-                               "Output ONLY valid JSON with no additional text.",
+                    "Output ONLY valid JSON with no additional text.",
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -209,7 +234,8 @@ class ClassifierAgent(BaseAgent):
             except json.JSONDecodeError:
                 # Try to extract JSON from the response
                 import re
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
                 if json_match:
                     return json.loads(json_match.group())
                 raise
@@ -218,22 +244,27 @@ class ClassifierAgent(BaseAgent):
         """Generate SIWE header for x402 wallet auth."""
         import base64
         import json as json_lib
+
         wallet_key = self.config.get("venice_wallet_key", "")
         if not wallet_key:
             return ""
 
         # Simplified SIWE header generation
         # In production, use the actual SIWE signing flow
-        siwe_payload = json_lib.dumps({
-            "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-            "message": "Sign in to Venice AI",
-            "signature": "0x" + "0" * 130,
-            "timestamp": 1712659200000,
-            "chainId": 8453,
-        })
+        siwe_payload = json_lib.dumps(
+            {
+                "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+                "message": "Sign in to Venice AI",
+                "signature": "0x" + "0" * 130,
+                "timestamp": 1712659200000,
+                "chainId": 8453,
+            }
+        )
         return base64.b64encode(siwe_payload.encode()).decode()
 
-    async def _handle_402_and_retry(self, session: aiohttp.ClientSession, base_url: str, payload: dict, headers: dict) -> dict:
+    async def _handle_402_and_retry(
+        self, session: aiohttp.ClientSession, base_url: str, payload: dict, headers: dict
+    ) -> dict:
         """
         Handle 402 Payment Required by topping up x402 balance and retrying.
 
@@ -246,7 +277,10 @@ class ClassifierAgent(BaseAgent):
         async with session.post(f"{base_url}/x402/top-up") as topup_resp:
             if topup_resp.status == 402:
                 instructions = await topup_resp.json()
-                self.log("info", f"x402 top-up required: {instructions.get('suggestedTopUpUsd', 10)} USDC")
+                self.log(
+                    "info",
+                    f"x402 top-up required: {instructions.get('suggestedTopUpUsd', 10)} USDC",
+                )
 
         # Retry after top-up with same headers
         async with session.post(

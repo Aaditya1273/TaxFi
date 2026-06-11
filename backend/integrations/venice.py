@@ -20,6 +20,8 @@ from typing import Any, Optional
 
 import aiohttp
 
+from backend.utils.retry import circuit_breaker_call, get_circuit_breaker
+
 
 # Base URLs
 VENICE_BASE_URL = "https://api.venice.ai/api/v1"
@@ -211,6 +213,45 @@ class VeniceClient:
         if response_format:
             payload["response_format"] = response_format
 
+        return await circuit_breaker_call(
+            "venice_ai",
+            "venice_chat_completion",
+            lambda: self._do_chat_completion(
+                messages, response_format, temperature, max_tokens, retry_on_402
+            ),
+            max_retries=3,
+            base_delay=1.0,
+        )
+
+    async def _do_chat_completion(
+        self,
+        messages: list[dict],
+        response_format: Optional[dict] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1000,
+        retry_on_402: bool = True,
+    ) -> Any:
+        """Internal implementation with retry logic handled by circuit_breaker_call."""
+        session = await self.get_session()
+        headers = {"Content-Type": "application/json"}
+
+        # Set auth header
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.wallet_key:
+            siwx = self._generate_siwx_header()
+            if siwx:
+                headers["X-Sign-In-With-X"] = siwx
+
+        payload = {
+            "model": self.default_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_completion_tokens": max_tokens,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+
         try:
             async with session.post(
                 f"{self.base_url}/chat/completions",
@@ -220,7 +261,7 @@ class VeniceClient:
                 if resp.status == 402 and retry_on_402:
                     # Handle x402 payment required
                     await self._handle_402(resp)
-                    return await self._chat_completion(
+                    return await self._do_chat_completion(
                         messages, response_format, temperature, max_tokens, False
                     )
 

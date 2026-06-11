@@ -432,6 +432,31 @@ class LossDetector(BaseAgent):
             await self._session.close()
             self._session = None
 
+    def restore_opportunities_from_db(self, pending: list[dict]) -> None:
+        """Restore pending harvest opportunities from database rows."""
+        restored = []
+        for row in pending:
+            opp = HarvestOpportunity(
+                asset=row.get("asset", ""),
+                asset_address=row.get("asset_address", ""),
+                quantity=row.get("quantity", 0.0),
+                cost_basis_per_unit=row.get("cost_basis_per_unit", 0.0),
+                current_price_per_unit=row.get("current_price", 0.0),
+                unrealized_loss=row.get("unrealized_loss", 0.0),
+                loss_percentage=row.get("loss_pct", 0.0),
+                holding_period_days=row.get("holding_days", 0),
+                is_short_term=bool(row.get("is_short_term", True)),
+                estimated_tax_savings=row.get("estimated_savings", 0.0),
+                confidence=row.get("confidence", 0.0),
+                reasoning=row.get("reasoning", ""),
+                recommended_rebuy=row.get("recommended_rebuy"),
+                chain_id=row.get("chain_id", ""),
+                harvest_priority=row.get("priority", 5),
+            )
+            restored.append(opp)
+        self.opportunities = restored
+        self.log("info", f"Restored {len(restored)} pending harvest opportunities from database")
+
     @staticmethod
     def _holding_period(timestamp: int) -> int:
         """Calculate holding period in days."""

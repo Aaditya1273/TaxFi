@@ -311,6 +311,44 @@ class BasisAgent(BaseAgent):
             ],
         }
 
+    async def restore_ledger_from_db(
+        self,
+        asset: str,
+        method: str,
+        total_acquired: float,
+        total_sold: float,
+        realized_gain_loss: float,
+        lots: list[dict],
+    ) -> None:
+        """Restore a cost basis ledger from database rows."""
+        method_enum = CostBasisMethod(method) if method in CostBasisMethod._member_map_ else CostBasisMethod.HIFO
+        ledger = CostBasisLedger(
+            asset=asset,
+            method=method_enum,
+            total_acquired=total_acquired,
+            total_sold=total_sold,
+            realized_gain_loss=realized_gain_loss,
+        )
+        for lot_dict in lots:
+            lot = AcquisitionLot(
+                amount=lot_dict["amount"],
+                remaining_amount=lot_dict.get("remaining_amount", lot_dict["amount"]),
+                timestamp=lot_dict.get("timestamp", 0),
+                rate=lot_dict.get("rate", 0.0),
+                cost_basis=lot_dict.get("cost_basis", lot_dict["amount"] * lot_dict.get("rate", 0.0)),
+                tx_hash=lot_dict.get("tx_hash", ""),
+                chain_id=lot_dict.get("chain_id", ""),
+                asset=asset,
+                lot_id=lot_dict["lot_id"],
+            )
+            ledger.lots.append(lot)
+            # Update lot counter to avoid ID collisions
+            lot_num = int(lot.lot_id.split("_")[1]) if "_" in lot.lot_id else 0
+            self._lot_counter = max(self._lot_counter, lot_num)
+
+        self.ledgers[asset] = ledger
+        self.log("info", f"Restored ledger for {asset}: {len(lots)} lots, {total_acquired} acquired")
+
     def get_summary(self) -> dict[str, Any]:
         """Get a summary of all cost basis ledgers."""
         total_gain_loss = sum(l.realized_gain_loss for l in self.ledgers.values())

@@ -12,13 +12,14 @@ The user never needs ETH — the relayer accepts USDC for gas.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import aiohttp
+
+from backend.utils.retry import circuit_breaker_call, get_circuit_breaker
 
 
 # Relayer endpoints
@@ -200,6 +201,19 @@ class OneshotClient:
             "params": [params],
         }
 
+        return await circuit_breaker_call(
+            "oneshot_relayer",
+            "send_transaction",
+            lambda: self._do_send_transaction(payload, relayer_url, target_chain, memo),
+            max_retries=2,
+            base_delay=2.0,
+        )
+
+    async def _do_send_transaction(
+        self, payload: dict, relayer_url: str, target_chain: str, memo: str
+    ) -> dict:
+        """Internal send implementation with circuit breaker protection."""
+        session = await self.get_session()
         try:
             async with session.post(relayer_url, json=payload) as resp:
                 if resp.status != 200:
@@ -215,7 +229,7 @@ class OneshotClient:
                     "success": True,
                     "task_id": task_id,
                     "chain_id": target_chain,
-                    "memo": params["memo"],
+                    "memo": memo or f"taxfi-harvest-{int(time.time())}",
                     "status": "submitted",
                 }
         except Exception as e:

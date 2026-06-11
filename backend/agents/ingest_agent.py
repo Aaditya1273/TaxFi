@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
-from .base_agent import BaseAgent, AgentResult
+from .base_agent import AgentResult, BaseAgent
 
 
 class IngestAgent(BaseAgent):
@@ -48,11 +48,14 @@ class IngestAgent(BaseAgent):
             AgentResult with normalized transaction events
         """
         self.start_timer()
-        target_chains = chains or self.config.get("supported_chains", [
-            "eip155:1",      # Ethereum
-            "eip155:8453",   # Base
-            "eip155:42161",  # Arbitrum
-        ])
+        target_chains = chains or self.config.get(
+            "supported_chains",
+            [
+                "eip155:1",  # Ethereum
+                "eip155:8453",  # Base
+                "eip155:42161",  # Arbitrum
+            ],
+        )
 
         self.log("info", f"Ingesting transactions for {address} across {len(target_chains)} chains")
 
@@ -134,14 +137,16 @@ class IngestAgent(BaseAgent):
             "jsonrpc": "2.0",
             "id": 1,
             "method": "alchemy_getAssetTransfers",
-            "params": [{
-                "fromBlock": "0x0",
-                "toBlock": "latest",
-                "fromAddress": address,
-                "toAddress": address,
-                "category": ["external", "internal", "erc20", "erc721", "erc1155"],
-                "maxCount": "0x64",
-            }],
+            "params": [
+                {
+                    "fromBlock": "0x0",
+                    "toBlock": "latest",
+                    "fromAddress": address,
+                    "toAddress": address,
+                    "category": ["external", "internal", "erc20", "erc721", "erc1155"],
+                    "maxCount": "0x64",
+                }
+            ],
         }
 
         async with session.post(url, json=payload) as resp:
@@ -156,29 +161,38 @@ class IngestAgent(BaseAgent):
         """Normalize raw transaction data into canonical format."""
         normalized = []
         for txn in raw_txns:
-            normalized.append({
-                "chain_id": chain_id,
-                "tx_hash": txn.get("tx_hash") or txn.get("hash", ""),
-                "block_number": txn.get("block_height") or txn.get("blockNum", 0),
-                "from_address": txn.get("from_address") or txn.get("from", ""),
-                "to_address": txn.get("to_address") or txn.get("to", ""),
-                "value": str(txn.get("value", "0")),
-                "token_address": txn.get("contract_address") or "",
-                "token_symbol": txn.get("contract_ticker_symbol", ""),
-                "method": txn.get("method_calls", [{}])[0].get("name", "") if isinstance(txn.get("method_calls"), list) else "",
-                "timestamp": txn.get("block_signed_at") or txn.get("metadata", {}).get("blockTimestamp", ""),
-                "log_events": txn.get("log_events", []),
-                "transfers": txn.get("transfers", []),
-                "gas_used": str(txn.get("gas_spent", "0")),
-                "gas_price": str(txn.get("gas_price", "0")),
-                "successful": txn.get("successful", True),
-            })
+            normalized.append(
+                {
+                    "chain_id": chain_id,
+                    "tx_hash": txn.get("tx_hash") or txn.get("hash", ""),
+                    "block_number": txn.get("block_height") or txn.get("blockNum", 0),
+                    "from_address": txn.get("from_address") or txn.get("from", ""),
+                    "to_address": txn.get("to_address") or txn.get("to", ""),
+                    "value": str(txn.get("value", "0")),
+                    "token_address": txn.get("contract_address") or "",
+                    "token_symbol": txn.get("contract_ticker_symbol", ""),
+                    "method": txn.get("method_calls", [{}])[0].get("name", "")
+                    if isinstance(txn.get("method_calls"), list)
+                    else "",
+                    "timestamp": txn.get("block_signed_at")
+                    or txn.get("metadata", {}).get("blockTimestamp", ""),
+                    "log_events": txn.get("log_events", []),
+                    "transfers": txn.get("transfers", []),
+                    "gas_used": str(txn.get("gas_spent", "0")),
+                    "gas_price": str(txn.get("gas_price", "0")),
+                    "successful": txn.get("successful", True),
+                }
+            )
         return normalized
 
     # DEV_MOCK: Replace with real Covalent/Alchemy data in production
     def _generate_mock_data(self, address: str, chain_id: str) -> list[dict[str, Any]]:
         """Generate mock transaction data for development/testing."""
+        import hashlib
         import random
+
+        seed = int(hashlib.sha256(f"{address}:{chain_id}".encode()).hexdigest()[:16], 16)
+        rng = random.Random(seed)
         mock_txns = []
         tokens = [
             {"symbol": "ETH", "address": "0x0000000000000000000000000000000000000000"},
@@ -187,40 +201,48 @@ class IngestAgent(BaseAgent):
             {"symbol": "LINK", "address": "0x514910771AF9Ca656af840dff83E8264EcF986CA"},
         ]
 
-        for _ in range(random.randint(5, 20)):
-            token = random.choice(tokens)
-            mock_txns.append({
-                "chain_id": chain_id,
-                "tx_hash": f"0x{random.randrange(10**40):040x}",
-                "block_number": random.randint(19000000, 21000000),
-                "from_address": address if random.random() > 0.3 else f"0x{random.randrange(10**40):040x}",
-                "to_address": address if random.random() < 0.3 else f"0x{random.randrange(10**40):040x}",
-                "value": str(random.uniform(0.001, 100)),
-                "token_address": token["address"],
-                "token_symbol": token["symbol"],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "method": random.choice(["swap", "transfer", "approve", "deposit", "withdraw"]),
-                "transfers": [{
-                    "from_address": address,
-                    "to_address": f"0x{random.randrange(10**40):040x}",
-                    "delta": str(random.uniform(-10, 10)),
+        for _ in range(rng.randint(5, 20)):
+            token = rng.choice(tokens)
+            mock_txns.append(
+                {
+                    "chain_id": chain_id,
+                    "tx_hash": f"0x{rng.randrange(10**40):040x}",
+                    "block_number": rng.randint(19000000, 21000000),
+                    "from_address": address
+                    if rng.random() > 0.3
+                    else f"0x{rng.randrange(10**40):040x}",
+                    "to_address": address
+                    if rng.random() < 0.3
+                    else f"0x{rng.randrange(10**40):040x}",
+                    "value": str(rng.uniform(0.001, 100)),
+                    "token_address": token["address"],
                     "token_symbol": token["symbol"],
-                }],
-                "gas_used": str(random.randint(50000, 500000)),
-                "gas_price": str(random.randint(10, 100)),
-                "successful": True,
-            })
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "method": rng.choice(["swap", "transfer", "approve", "deposit", "withdraw"]),
+                    "transfers": [
+                        {
+                            "from_address": address,
+                            "to_address": f"0x{rng.randrange(10**40):040x}",
+                            "delta": str(rng.uniform(-10, 10)),
+                            "token_symbol": token["symbol"],
+                        }
+                    ],
+                    "gas_used": str(rng.randint(50000, 500000)),
+                    "gas_price": str(rng.randint(10, 100)),
+                    "successful": True,
+                }
+            )
         return mock_txns
 
     @staticmethod
     def _to_covalent_chain_id(chain_id: str) -> int:
         """Convert CAIP-2 chain ID to Covalent chain ID."""
         mapping = {
-            "eip155:1": 1,        # Ethereum
+            "eip155:1": 1,  # Ethereum
             "eip155:8453": 8453,  # Base
-            "eip155:42161": 42161,# Arbitrum
-            "eip155:137": 137,    # Polygon
-            "eip155:10": 10,      # Optimism
+            "eip155:42161": 42161,  # Arbitrum
+            "eip155:137": 137,  # Polygon
+            "eip155:10": 10,  # Optimism
         }
         return mapping.get(chain_id, 1)
 
