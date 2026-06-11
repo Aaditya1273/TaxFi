@@ -174,7 +174,7 @@ contract TaxFiAgentSmartAccount {
         if (amountSold == 0 || usdcOut == 0) revert InvalidAmount();
 
         // Validate permission against the registry
-        AgentPermissionRegistry registry = AgentPermissionRegistry(config.permissionRegistry);
+        IAgentPermissionRegistry registry = IAgentPermissionRegistry(config.permissionRegistry);
         bool isValid = registry.checkPermission(
             permissionHash,
             usdcOut,
@@ -214,7 +214,7 @@ contract TaxFiAgentSmartAccount {
 }
 
 // Import interface from the registry
-interface AgentPermissionRegistry {
+interface IAgentPermissionRegistry {
     function checkPermission(
         bytes32 permissionHash,
         uint256 amount,
