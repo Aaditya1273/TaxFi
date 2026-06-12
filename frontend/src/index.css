@@ -37,6 +37,25 @@
     box-shadow: 0 0 20px rgba(34, 197, 94, 0.15);
   }
 
+  /* Toast and sidebar animations */
+  @keyframes slide-up {
+    from { transform: translateY(100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  @keyframes slide-right {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s ease-out;
+  }
+
+  .animate-slide-right {
+    animation: slide-right 0.3s ease-out;
+  }
+
   /* Animated background */
   .bg-grid {
     background-image: linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
@@ -91,8 +110,8 @@
   }
 
   .opportunity-card {
-    @apply card border-l-4 border-l-hover transition-all duration-200
-           cursor-pointer hover:border-l-hover-dark;
+    @apply card border-l-4 border-l-harvest transition-all duration-200
+           cursor-pointer hover:border-l-harvest-dark;
   }
 
   .nav-link {

@@ -1,0 +1,22 @@
+import type { NextConfig } from 'next';
+
+const apiTarget = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+const nextConfig: NextConfig = {
+  reactStrictMode: true,
+
+  // Production-optimised standalone output for Docker
+  output: 'standalone',
+
+  // API proxy — replaces Vite's vite.config.ts proxy
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${apiTarget}/:path*`,
+      },
+    ];
+  },
+};
+
+export default nextConfig;

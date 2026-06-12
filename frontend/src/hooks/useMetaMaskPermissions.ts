@@ -32,6 +32,7 @@ import {
   arbitrum,
   baseSepolia,
   sepolia,
+  type Chain,
 } from 'viem/chains';
 
 import type { Address } from 'viem';
@@ -43,7 +44,7 @@ export interface Erc7715Actions {
   requestExecutionPermissions: (
     permissions: PermissionRequest[],
   ) => Promise<GrantedPermission[]>;
-  getGrantedPermissions: () => Promise<GrantedPermission[]>;
+  getGrantedExecutionPermissions: () => Promise<GrantedPermission[]>;
 }
 
 /** Wallet client extended with ERC-7715 actions */
@@ -75,12 +76,12 @@ export interface PermissionActions {
     periodDays?: number,
   ) => Promise<GrantedPermission[]>;
   /** Get currently granted permissions */
-  getGrantedPermissions: () => Promise<GrantedPermission[]>;
+  getGrantedExecutionPermissions: () => Promise<GrantedPermission[]>;
   /** Reset all permission state */
   reset: () => void;
 }
 
-const CHAIN_MAP: Record<number, (typeof mainnet)> = {
+const CHAIN_MAP: Record<number, Chain> = {
   1: mainnet,
   8453: base,
   42161: arbitrum,
@@ -122,7 +123,7 @@ export function useMetaMaskPermissions(): PermissionState & PermissionActions {
       const client = createWalletClient({
         transport: custom(window.ethereum),
         chain: CHAIN_MAP[chainId] ?? mainnet,
-      }).extend(erc7715ProviderActions()) as Erc7715WalletClient;
+      }).extend(erc7715ProviderActions()) as unknown as Erc7715WalletClient;
 
       walletClientRef.current = client;
       return client;
@@ -175,7 +176,7 @@ export function useMetaMaskPermissions(): PermissionState & PermissionActions {
 
       if (supportsErc7715) {
         try {
-          grantedPermissions = await client.getGrantedPermissions();
+          grantedPermissions = await client.getGrantedExecutionPermissions();
           for (const gp of grantedPermissions) {
             for (const perm of gp.permissions ?? []) {
               if (perm.permission?.type === 'erc20-token-periodic') {
@@ -284,7 +285,7 @@ export function useMetaMaskPermissions(): PermissionState & PermissionActions {
     if (!client) return [];
 
     try {
-      const granted = await client.getGrantedPermissions();
+      const granted = await client.getGrantedExecutionPermissions();
       setState((s) => ({ ...s, grantedPermissions: granted }));
       return granted;
     } catch {
@@ -321,7 +322,7 @@ export function useMetaMaskPermissions(): PermissionState & PermissionActions {
     ...state,
     checkPermissions,
     requestHarvestPermission,
-    getGrantedPermissions: getGranted,
+    getGrantedExecutionPermissions: getGranted,
     reset,
   };
 }

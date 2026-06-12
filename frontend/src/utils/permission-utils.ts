@@ -19,16 +19,18 @@ import type { Address, Hex } from 'viem';
  * In production, update these after deploying the smart contracts.
  */
 const TAXFI_AGENT_ADDRESSES: Record<number, Address> = {
-  1: '0x0000000000000000000000000000000000000000',      // Ethereum - TODO: deploy
-  8453: '0x0000000000000000000000000000000000000000',     // Base - TODO: deploy
-  42161: '0x0000000000000000000000000000000000000000',    // Arbitrum - TODO: deploy
+  1: '0x0000000000000000000000000000000000000000',      // Ethereum - TODO: deploy on mainnet
+  8453: '0x0000000000000000000000000000000000000000',     // Base - TODO: deploy on mainnet
+  42161: '0x0000000000000000000000000000000000000000',    // Arbitrum - TODO: deploy on mainnet
+  11155111: '0x401E5B592D1F56f335405079F13d49b81309f82f',  // Ethereum Sepolia ✅ deployed
+  31337: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',   // Local Hardhat (dev)
   84532: '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18',   // Base Sepolia - dev
 };
 
 export function getTaxFiAgentAddress(chainId: number): Address {
   return (
     TAXFI_AGENT_ADDRESSES[chainId] ??
-    '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18'
+    '0x401E5B592D1F56f335405079F13d49b81309f82f'
   );
 }
 
@@ -64,6 +66,14 @@ export const SUPPORTED_CHAINS = [
     usdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address,
     covalentChainId: 84532,
     agentAddress: TAXFI_AGENT_ADDRESSES[84532],
+  },
+  {
+    id: 11155111,
+    name: 'Sepolia',
+    caip2: 'eip155:11155111',
+    usdcAddress: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' as Address,
+    covalentChainId: 11155111,
+    agentAddress: TAXFI_AGENT_ADDRESSES[11155111],
   },
 ] as const;
 

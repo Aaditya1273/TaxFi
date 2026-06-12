@@ -2,13 +2,12 @@
   "name": "taxfi",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
   "description": "TaxFi — Your crypto tax agent that pays for itself",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,26 +15,23 @@
     "@metamask/sdk": "^0.30.0",
     "@rainbow-me/rainbowkit": "^2.0.0",
     "@tanstack/react-query": "^5.0.0",
-    "@1shotapi/client-sdk": "^0.1.0",
-    "ethers": "^6.0.0",
+    "next": "^15.0.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "react-router-dom": "^6.20.0",
     "recharts": "^2.10.0",
-    "siwe": "^2.0.0",
     "viem": "^2.0.0",
     "wagmi": "^2.0.0",
     "x402": "^0.1.0"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^15.0.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.0",
-    "vite": "^5.0.0",
-    "eslint": "^8.56.0"
+    "typescript": "^5.3.0"
   }
 }
