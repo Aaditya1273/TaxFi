@@ -13,3 +13,5 @@ acme.json
 backend/__pycache__
 .vscode
 deployment
+
+.next
