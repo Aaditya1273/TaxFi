@@ -114,7 +114,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="flex gap-3 justify-center">
               <button
                 onClick={this.handleRetry}
-                className="bg-taxfi-600 hover:bg-taxfi-500 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 active:scale-[0.98]"
+                className="bg-accent-cobalt-dark hover:bg-accent-cobalt text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 active:scale-[0.98]"
               >
                 Try Again
               </button>

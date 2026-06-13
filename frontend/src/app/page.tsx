@@ -1,7 +1,15 @@
-'use client';
+import type { Metadata } from 'next';
+import LandingPage from './landing-page/page';
+import JsonLd from './landing-page/components/JsonLd';
+import { getLandingPageMetadata } from '../lib/seo';
 
-import { LandingPage } from '../components/LandingPage';
+export const metadata: Metadata = getLandingPageMetadata();
 
-export default function MarketingLandingPage() {
-  return <LandingPage />;
+export default function Home() {
+  return (
+    <>
+      <JsonLd faq webApplication product />
+      <LandingPage />
+    </>
+  );
 }

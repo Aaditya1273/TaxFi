@@ -84,7 +84,7 @@ export function LiquidButton({ children, className = '', onClick }: LiquidButton
     >
       {/* Liquid gradient background */}
       <div
-        className="absolute inset-0 bg-gradient-to-r from-taxfi-600 via-taxfi-500 to-harvest-500"
+        className="absolute inset-0 bg-gradient-to-r from-accent-cobalt-dark via-accent-cobalt to-accent-orchid"
         style={{
           backgroundSize: '200% 200%',
           backgroundPosition: `${gradientPhase}% 50%`,

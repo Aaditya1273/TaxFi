@@ -26,11 +26,11 @@ export function StatCard({ label, value, icon, trend, gradient = false, classNam
       </div>
       {trend && (
         <div className={`flex items-center gap-2 mt-2 text-sm ${
-          trend.isPositive ? 'text-harvest-400' : 'text-loss-400'
+          trend.isPositive ? 'text-emerald-600' : 'text-red-500'
         }`}>
           <span>{trend.isPositive ? '↑' : '↓'}</span>
           <span>{Math.abs(trend.value)}%</span>
-          <span className="text-gray-500">vs last month</span>
+          <span className="text-gray-400">vs last month</span>
         </div>
       )}
     </div>

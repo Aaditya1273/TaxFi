@@ -47,12 +47,13 @@ export function DonutChart({
           </Pie>
           <Tooltip
             contentStyle={{
-              backgroundColor: 'rgba(17, 24, 39, 0.9)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              backgroundColor: '#fff',
+              border: '1px solid #e5e7eb',
               borderRadius: '12px',
               padding: '12px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
             }}
-            itemStyle={{ color: '#fff' }}
+            itemStyle={{ color: '#111827' }}
           />
           <Legend 
             verticalAlign="bottom" 

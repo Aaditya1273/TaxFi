@@ -87,7 +87,7 @@ export function ParallaxCard({ children, className = '', intensity = 20 }: Paral
         />
         
         <div 
-          className="absolute inset-0 bg-gradient-to-tl from-taxfi-500/10 to-transparent rounded-3xl transition-opacity duration-300"
+          className="absolute inset-0 bg-gradient-to-tl from-emerald-500/10 to-transparent rounded-3xl transition-opacity duration-300"
           style={{ 
             transform: 'translateZ(40px)',
             opacity: isHovered ? 1 : 0 

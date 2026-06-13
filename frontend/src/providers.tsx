@@ -2,7 +2,7 @@
 
 import { WagmiProvider, createConfig, http, injected } from 'wagmi';
 import { mainnet, base, arbitrum, baseSepolia, sepolia } from 'wagmi/chains';
-import { RainbowKitProvider, lightTheme, connectorsForWallets, getDefaultWallets } from '@rainbow-me/rainbowkit';
+import { RainbowKitProvider, darkTheme, connectorsForWallets, getDefaultWallets } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TaxFiProvider } from './hooks/useTaxFi';
 import { ToastProvider } from './components/Toast';
@@ -75,7 +75,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider coolMode theme={lightTheme()}>
+        <RainbowKitProvider coolMode theme={darkTheme({
+    accentColor: '#2F57EF',
+    accentColorForeground: '#FFFFFF',
+    borderRadius: 'large',
+    fontStack: 'system',
+    overlayBlur: 'small',
+  })}>
           <ToastProvider>
             <TaxFiProvider>
               {children}

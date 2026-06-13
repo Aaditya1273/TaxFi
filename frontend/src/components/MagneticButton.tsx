@@ -82,7 +82,7 @@ export function MagneticButton({ children, className = '', strength = 30, onClic
       
       {/* Glow effect */}
       <div 
-        className="absolute inset-0 bg-gradient-to-r from-taxfi-500/20 to-harvest-500/20 blur-xl transition-all duration-300"
+        className="absolute inset-0 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 blur-xl transition-all duration-300"
         style={{
           opacity: isHovered ? 1 : 0,
           transform: isHovered ? 'scale(1.2)' : 'scale(1)',

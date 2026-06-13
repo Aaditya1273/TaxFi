@@ -99,20 +99,14 @@ export interface ApiConfig {
 }
 
 const getDefaultConfig = (): ApiConfig => {
-  // In production, API calls go through nginx which proxies /api/* to the backend.
-  // In development, point directly to the backend server.
-  // NEXT_PUBLIC_API_URL should only be set for SSR or dev environments where
-  // the frontend needs to reach the backend directly (not through nginx).
-  const isBrowser = typeof window !== 'undefined';
-  const apiBase = isBrowser
-    ? ''  // Browser: same-origin through nginx proxy
-    : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');  // SSR: direct
-  const wsBase = isBrowser
-    ? ''  // Browser: same-origin through nginx WebSocket proxy (/ws)
-    : (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000');  // SSR: direct
+  // In production (Vercel frontend + Render backend), NEXT_PUBLIC_API_URL
+  // must be set to the Render backend URL (e.g. https://taxfi-api.onrender.com).
+  // In dev mode, it falls back to localhost.
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || apiUrl.replace(/^http/, 'ws') || 'ws://localhost:8000';
   return {
-    baseUrl: apiBase,
-    wsUrl: wsBase,
+    baseUrl: apiUrl,
+    wsUrl: wsUrl,
   };
 };
 
