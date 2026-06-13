@@ -17,6 +17,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  // Webpack: resolve missing React Native module that @metamask/sdk incorrectly imports
+  webpack: (config) => {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      '@react-native-async-storage/async-storage': false,
+    };
+    return config;
+  },
 };
 
 export default nextConfig;

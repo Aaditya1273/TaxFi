@@ -4,27 +4,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        taxfi: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
+        surface: {
+          DEFAULT: '#1A1A1A',
+          light: '#2A2A2A',
+          lighter: '#3A3A3A',
+        },
+        accent: {
+          cobalt: '#2F57EF',
+          'cobalt-light': '#4A7AFF',
+          'cobalt-dark': '#1E3DBF',
+          orchid: '#A855F7',
+          'orchid-light': '#C084FC',
+          'orchid-dark': '#7C3AED',
         },
         harvest: {
-          light: '#dcfce7',
           DEFAULT: '#22c55e',
-          dark: '#15803d',
+          light: '#4ade80',
+          dark: '#16a34a',
         },
         loss: {
-          light: '#fee2e2',
           DEFAULT: '#ef4444',
-          dark: '#b91c1c',
+          light: '#f87171',
+          dark: '#dc2626',
         },
       },
       fontFamily: {
