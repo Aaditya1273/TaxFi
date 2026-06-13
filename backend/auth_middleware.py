@@ -27,10 +27,20 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 import jwt as pyjwt
 import structlog
+
+# Auto-load .env file from project root (before any env var reads)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=str(_env_path))
+    except ImportError:
+        pass
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -60,7 +70,15 @@ logger = structlog.get_logger("taxfi.api")
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-JWT_SECRET = os.getenv("TAXFI_JWT_SECRET", "taxfi-dev-secret-change-in-production")
+JWT_SECRET = os.getenv("TAXFI_JWT_SECRET")
+if not JWT_SECRET:
+    if os.getenv("TAXFI_AUTH_DISABLED", "").lower() not in ("1", "true", "yes"):
+        raise RuntimeError(
+            "TAXFI_JWT_SECRET environment variable is required in production. "
+            "Set it to a cryptographically random string (64+ characters). "
+            "To disable auth for development only, set TAXFI_AUTH_DISABLED=true"
+        )
+    JWT_SECRET = "dev-insecure-secret-do-not-use"
 JWT_ALGORITHM = os.getenv("TAXFI_JWT_ALGORITHM", "HS256")
 STATIC_API_KEY = os.getenv("TAXFI_API_KEY", "")
 RATE_LIMIT = os.getenv("TAXFI_RATE_LIMIT", "100/minute")

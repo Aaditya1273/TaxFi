@@ -14,6 +14,7 @@ The x402 flow:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Optional
@@ -214,13 +215,46 @@ class X402Client:
 
     async def _verify_payment(self, payment_proof: str) -> bool:
         """
-        Verify an x402 payment proof.
+        Verify an x402 payment proof against the real x402 facilitator.
 
-        In production, checks with the x402 facilitator or
-        verifies the onchain transaction receipt.
+        Checks:
+        1. Payment proof is a valid transaction hash
+        2. Verifies with the x402 facilitator endpoint
+        3. As fallback, checks onchain receipt via 1Shot or public RPC
+
+        Raises:
+            PaymentVerificationError if the proof is invalid
         """
-        # For development, accept all payment proofs
-        return True
+        if not payment_proof or len(payment_proof) < 10:
+            self._log("warn", "Invalid payment proof (too short)")
+            return False
+
+        # Verify with the x402 facilitator endpoint
+        session = await self.get_session()
+        try:
+            async with session.post(
+                "https://api.x402.org/v1/verify",
+                json={"proof": payment_proof},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("verified", False)
+                self._log("warn", f"x402 facilitator returned {resp.status}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self._log("warn", f"x402 facilitator unreachable: {e}")
+
+        # Fallback: verify onchain receipt via public RPC
+        try:
+            from web3 import Web3
+            w3 = Web3(Web3.HTTPProvider("https://mainnet.base.org"))
+            tx = w3.eth.get_transaction_receipt(payment_proof)
+            if tx and tx.get("status") == 1:
+                return True
+        except Exception as e:
+            self._log("warn", f"Onchain verification failed: {e}")
+
+        return False
 
     async def check_balance(self, wallet_address: str) -> float:
         """

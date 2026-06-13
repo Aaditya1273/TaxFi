@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -103,8 +104,18 @@ class FormGenerator(BaseAgent):
         # Populate entries from ledgers
         ledgers = cost_basis_summary.get("ledgers", {})
         if not ledgers:
-            # Mock data for development
-            form_data = self._generate_mock_data(tax_year, user_address)
+            # Check if dev/test mode is enabled via config or env var
+            dev_mode = self.config.get("dev_mode", False) or os.getenv(
+                "TAXFI_FORM_DEV_MODE", ""
+            ).lower() in ("1", "true", "yes")
+            if dev_mode:
+                self.log("warn", "No cost basis data — using generated mock data (dev mode)")
+                form_data = self._generate_mock_data(tax_year, user_address)
+            else:
+                return self.error(
+                    message="No cost basis data available. Run a pipeline scan first to generate tax forms.",
+                    error="No cost basis ledgers found — pipeline must be run before generating forms",
+                )
         else:
             form_data = self._build_from_ledgers(ledgers, tax_year, user_address)
 

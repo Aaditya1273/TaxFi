@@ -28,6 +28,9 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Dynamically add Render URL to CORS if deployed there
+_render_url = os.getenv("RENDER_EXTERNAL_URL", "")
+
 from backend.auth_middleware import (
     create_jwt_token,
     create_login_router,
@@ -150,14 +153,7 @@ app = FastAPI(
 # CORS — allow the frontend dev server, Docker compose, and any production origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Alternate dev port
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-        "http://localhost:80",  # Docker compose (nginx)
-        "http://127.0.0.1:80",  # Docker compose via IP
-    ],
+    allow_origins=["*"],  # Allow all origins (dev mode — restrict in production)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -201,6 +197,36 @@ async def _broadcast(event_type: str, payload: dict) -> None:
 
 
 # ── Health & Config ─────────────────────────────────────────────────────────
+
+
+@app.get("/", tags=["System"])
+@limiter.exempt
+async def root():
+    """Root endpoint - returns API information."""
+    return {
+        "name": "TaxFi API",
+        "version": "0.1.0",
+        "description": "Crypto Tax Optimization Agent Pipeline",
+        "endpoints": {
+            "health": "/health",
+            "config": "/config",
+            "metrics": "/metrics",
+            "docs": "/docs",
+            "users": "/users",
+            "pipeline": "/pipeline",
+            "opportunities": "/opportunities",
+            "ledgers": "/ledgers",
+            "forms": "/forms",
+        },
+    }
+
+
+@app.get("/favicon.ico", tags=["System"])
+@limiter.exempt
+async def favicon():
+    """Favicon endpoint - returns 204 to prevent 404 errors."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
 
 
 @app.get("/health", tags=["System"])

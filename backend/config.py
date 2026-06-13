@@ -84,8 +84,8 @@ class TaxFiConfig:
             venice_base_url=os.getenv("VENICE_BASE_URL", "https://api.venice.ai/api/v1"),
             venice_model=os.getenv("VENICE_MODEL", "zai-org-glm-5-1"),
             venice_classification_model=os.getenv("VENICE_CLASSIFICATION_MODEL", "zai-org-glm-5-1"),
-            oneshot_api_key=os.getenv("ONESHOT_API_KEY"),
-            oneshot_api_secret=os.getenv("ONESHOT_API_SECRET"),
+            oneshot_api_key=os.getenv("ONESHOT_API_KEY") or os.getenv("1SHOT_API_KEY"),
+            oneshot_api_secret=os.getenv("ONESHOT_API_SECRET") or os.getenv("1SHOT_API_SECRET"),
             oneshot_relayer_url=os.getenv(
                 "ONESHOT_RELAYER_URL", "https://relayer.1shotapi.dev/relayers"
             ),

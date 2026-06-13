@@ -243,6 +243,7 @@ class IngestAgent(BaseAgent):
             "eip155:42161": 42161,  # Arbitrum
             "eip155:137": 137,  # Polygon
             "eip155:10": 10,  # Optimism
+            "eip155:11155111": 11155111,  # Sepolia
         }
         return mapping.get(chain_id, 1)
 
@@ -255,6 +256,7 @@ class IngestAgent(BaseAgent):
             "eip155:42161": "arb-mainnet",
             "eip155:137": "polygon-mainnet",
             "eip155:10": "opt-mainnet",
+            "eip155:11155111": "eth-sepolia",
         }
         return mapping.get(chain_id, "eth-mainnet")
 

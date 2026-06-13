@@ -49,7 +49,7 @@ class OneshotClient:
 
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
-    chain_id: str = "eip155:84532"  # Base Sepolia testnet default
+    chain_id: str = "eip155:11155111"  # Ethereum Sepolia (contracts deployed here)
 
     _session: Optional[aiohttp.ClientSession] = None
     _capabilities_cache: Optional[dict] = None
@@ -57,7 +57,10 @@ class OneshotClient:
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if self.api_key:
+                headers["x-api-key"] = self.api_key
+            self._session = aiohttp.ClientSession(headers=headers)
         return self._session
 
     async def get_capabilities(self) -> dict:
