@@ -1,14 +1,15 @@
 import type { NextConfig } from 'next';
 
 const apiTarget = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const isVercel = process.env.VERCEL === '1';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
-  // Production-optimised standalone output for Docker
-  output: 'standalone',
+  // Standalone output for Docker — Vercel handles this natively
+  ...(isVercel ? {} : { output: 'standalone' }),
 
-  // API proxy — replaces Vite's vite.config.ts proxy
+  // API proxy — sends /api/* requests to the FastAPI backend
   async rewrites() {
     return [
       {
