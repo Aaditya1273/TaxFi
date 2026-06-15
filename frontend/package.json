@@ -3,9 +3,6 @@
   "private": true,
   "version": "1.0.0",
   "description": "TaxFi — Your crypto tax agent that pays for itself",
-  "pnpm": {
-    "onlyBuiltDependencies": ["bufferutil", "keccak", "sharp", "unrs-resolver", "utf-8-validate"]
-  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
