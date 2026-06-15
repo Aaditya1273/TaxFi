@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "npx pnpm build",
-  "installCommand": "npx pnpm install --frozen-lockfile",
+  "installCommand": "npx pnpm install",
   "outputDirectory": ".next",
   "git": {
     "deploymentEnabled": {
