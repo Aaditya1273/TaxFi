@@ -1,0 +1,63 @@
+services:
+  # ── TaxFi Backend API ───────────────────────────────────────────────────────
+  - type: web
+    name: taxfi-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.backend
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      # ── Required ──────────────────────────────────────────────────────────
+      - key: VENICE_API_KEY
+        value: VENICE_INFERENCE_KEY_lH6dUp5gHRdoZfCPydB1u2NFso9sXTwb5mUR0bf1Zm
+
+      - key: COVALENT_API_KEY
+        value: cqt_rQCr3jp8FcBghtdRcRQ3VRFqRPJ9
+
+      - key: ONESHOT_API_KEY
+        value: XNavzdp8acB2ykDVYWNJN3SRgCu4KpBl
+
+      - key: X402_WALLET_KEY
+        value: 0x5a0676ee9ea638957b6f8c43c99e2db52e03ef9cbf47a444f9e284f753cc40ed
+
+      # ── Smart Contract Addresses (Sepolia) ────────────────────────────────
+      - key: TAXFI_PERMISSION_REGISTRY
+        value: 0x4F7141763FeB5dB91178343d3c894E88992794A3
+
+      - key: TAXFI_AGENT_ADDRESS
+        value: 0x401E5B592D1F56f335405079F13d49b81309f82f
+
+      - key: TAXFI_VAULT_ADDRESS
+        value: 0x2AF710af85914DEe0AA89017223638367645f6b4
+
+      - key: TAXFI_ATTESTOR_ADDRESS
+        value: 0xff32FDd41F06b1a166d56677d1C5c0001251BF4C
+
+      # ── Configuration ─────────────────────────────────────────────────────
+      - key: TAXFI_COST_BASIS_METHOD
+        value: HIFO
+
+      - key: TAXFI_HARVEST_THRESHOLD
+        value: "100.0"
+
+      - key: TAXFI_SCAN_INTERVAL
+        value: "3600"
+
+      - key: TAXFI_SUPPORTED_CHAINS
+        value: eip155:11155111
+
+      - key: TAXFI_DB_PATH
+        value: /data/taxfi.db
+
+      - key: TAXFI_AUTH_DISABLED
+        value: "true"
+
+      - key: PYTHONPATH
+        value: /app
+
+    disk:
+      name: taxfi-db
+      mountPath: /data
+      sizeGB: 1
