@@ -35,12 +35,16 @@ async def agent() -> AsyncGenerator[LossDetector, None]:
 
 
 @pytest_asyncio.fixture
-async def agent_with_api_key() -> AsyncGenerator[LossDetector, None]:
-    """LossDetector with a fake API key so _fetch_market_prices triggers HTTP."""
-    a = LossDetector(config={"coingecko_api_key": "fake-key"})
+async def agent_with_price_oracle() -> AsyncGenerator[LossDetector, None]:
+    """LossDetector with a PriceOracle wired in for real market prices."""
+    from backend.integrations.price_oracle import PriceOracle
+    a = LossDetector(config={})
+    oracle = PriceOracle()
+    a.set_price_oracle(oracle)
     try:
         yield a
     finally:
+        await oracle.close()
         await a.close()
 
 
@@ -189,9 +193,9 @@ class TestSharedSessionAcrossMethods:
         assert not agent._session.closed
 
     @pytest.mark.asyncio
-    async def test_fetch_prices_uses_and_reuses_session(self, agent_with_api_key: LossDetector):
-        """_fetch_market_prices should create and reuse the session
-        when an API key is configured."""
+    async def test_fetch_prices_uses_price_oracle(self, agent_with_price_oracle: LossDetector):
+        """_fetch_market_prices should use the PriceOracle when wired in,
+        not the LossDetector's own session."""
         cost_basis_data = {
             "ledgers": {
                 "ETH": {
@@ -200,20 +204,22 @@ class TestSharedSessionAcrossMethods:
             },
         }
 
-        result = await agent_with_api_key._fetch_market_prices(cost_basis_data)
-        assert agent_with_api_key._session is not None
-        assert not agent_with_api_key._session.closed
+        result = await agent_with_price_oracle._fetch_market_prices(cost_basis_data)
+        # PriceOracle manages its own session - LossDetector's session stays None
+        # Result should be a dict (even if prices are 0 because no real API call)
+        assert isinstance(result, dict)
+        assert "ETH" in result
 
     @pytest.mark.asyncio
-    async def test_both_methods_share_same_session(self, agent_with_api_key: LossDetector):
-        """Verify that _call_venice_analysis and _fetch_market_prices
-        use the same session object."""
-        # Trigger session via venice_analysis first
-        _ = await agent_with_api_key._call_venice_analysis("hello")
-        s_venice = agent_with_api_key._session
+    async def test_price_oracle_manages_its_own_session(self, agent_with_price_oracle: LossDetector):
+        """PriceOracle has its own session separate from LossDetector's.
+        _fetch_market_prices delegates to PriceOracle, not to _get_session()."""
+        # Trigger a venice call first — creates LossDetector's session
+        _ = await agent_with_price_oracle._call_venice_analysis("hello")
+        s_venice = agent_with_price_oracle._session
         assert s_venice is not None
 
-        # Now use _fetch_market_prices — should reuse same session
+        # Now use _fetch_market_prices — uses PriceOracle, not LossDetector session
         cost_basis_data = {
             "ledgers": {
                 "ETH": {
@@ -221,8 +227,9 @@ class TestSharedSessionAcrossMethods:
                 },
             },
         }
-        _ = await agent_with_api_key._fetch_market_prices(cost_basis_data)
-        assert agent_with_api_key._session is s_venice
+        _ = await agent_with_price_oracle._fetch_market_prices(cost_basis_data)
+        # LossDetector's own session is unchanged
+        assert agent_with_price_oracle._session is s_venice
 
 
 # ──────────────────────────────────────────────────────
@@ -242,9 +249,9 @@ class TestSessionTriggerPaths:
         assert agent._session is not None
 
     @pytest.mark.asyncio
-    async def test_fetch_prices_without_api_key_skips_session(self, agent: LossDetector):
-        """_fetch_market_prices should NOT trigger _get_session()
-        when no API key is configured (falls through to price map)."""
+    async def test_fetch_prices_without_oracle_returns_zeroes(self, agent: LossDetector):
+        """_fetch_market_prices should return zero prices when no
+        PriceOracle is wired in (no real API data source)."""
         cost_basis_data = {
             "ledgers": {
                 "ETH": {
@@ -254,13 +261,13 @@ class TestSessionTriggerPaths:
         }
         result = await agent._fetch_market_prices(cost_basis_data)
         assert agent._session is None
-        # Should still return fallback prices
         assert isinstance(result, dict)
+        # Without PriceOracle, prices are 0
+        assert result.get("ETH", -1) == 0.0
 
     @pytest.mark.asyncio
-    async def test_fetch_prices_with_api_key_triggers_session(self, agent_with_api_key: LossDetector):
-        """_fetch_market_prices should trigger _get_session()
-        when an API key is configured."""
+    async def test_fetch_prices_with_oracle_uses_price_oracle(self, agent_with_price_oracle: LossDetector):
+        """_fetch_market_prices should use the PriceOracle when one is wired."""
         cost_basis_data = {
             "ledgers": {
                 "ETH": {
@@ -268,13 +275,15 @@ class TestSessionTriggerPaths:
                 },
             },
         }
-        await agent_with_api_key._fetch_market_prices(cost_basis_data)
-        assert agent_with_api_key._session is not None
+        result = await agent_with_price_oracle._fetch_market_prices(cost_basis_data)
+        # PriceOracle returns 0.0 for assets it can't fetch (no API call in test)
+        assert agent_with_price_oracle._session is None  # LossDetector session not used
+        assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_process_with_empty_data_does_not_trigger_session(self, agent: LossDetector):
         """process() with empty cost basis data and no market_prices should
-        not trigger any HTTP calls — no API key => fallback prices."""
+        not trigger any HTTP calls — no assets to fetch prices for."""
         result = await agent.process(cost_basis_data={})
         assert result.success
         assert agent._session is None

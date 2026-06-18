@@ -29,26 +29,19 @@ def oneshot_client():
 
 
 @pytest.mark.asyncio
-async def test_default_capabilities_fallback(oneshot_client):
-    """When the relayer is unreachable, should return sensible defaults."""
+async def test_get_capabilities_raises_on_unreachable(oneshot_client):
+    """When the relayer is unreachable, should raise an error — no fallback."""
     with patch("aiohttp.ClientSession.post", side_effect=Exception("Connection refused")):
-        caps = await oneshot_client.get_capabilities()
-
-    assert "targetAddress" in caps
-    assert "feeCollector" in caps
-    assert "tokens" in caps
-    assert "minFee" in caps
-    assert caps["minFee"] == "10000"
+        with pytest.raises(Exception):
+            await oneshot_client.get_capabilities()
 
 
 @pytest.mark.asyncio
-async def test_default_fee_estimate(oneshot_client):
-    """When fee estimation fails, should return default values."""
+async def test_fee_estimate_raises_on_failure(oneshot_client):
+    """When fee estimation fails, should raise an error — no default fee."""
     with patch("aiohttp.ClientSession.post", side_effect=Exception("API error")):
-        estimate = await oneshot_client.estimate_fee(delegation={"executions": []})
-
-    assert estimate["success"] is True
-    assert estimate["required_payment"] == "1000000"
+        with pytest.raises(Exception):
+            await oneshot_client.estimate_fee(delegation={"executions": []})
 
 
 @pytest.mark.asyncio
@@ -95,7 +88,7 @@ async def test_send_transaction_circuit_breaker(oneshot_client):
 
 @pytest.mark.asyncio
 async def test_send_transaction_retry(oneshot_client):
-    """send_transaction should handle errors gracefully (circuit breaker)."""
+    """send_transaction should propagate errors — no silent fallback."""
     mock_post = AsyncMock()
     mock_post.__aenter__.return_value = mock_post
     mock_post.__aexit__.return_value = None
@@ -103,12 +96,10 @@ async def test_send_transaction_retry(oneshot_client):
     mock_post.text = AsyncMock(return_value="Service Unavailable")
 
     with patch("aiohttp.ClientSession.post", return_value=mock_post):
-        result = await oneshot_client.send_transaction(
-            delegation={"signed_delegation": {"test": "data"}, "executions": []},
-        )
-
-    # Should handle the error gracefully
-    assert result["success"] is False or "error" in result
+        with pytest.raises(Exception, match="503|Service Unavailable"):
+            await oneshot_client.send_transaction(
+                delegation={"signed_delegation": {"test": "data"}, "executions": []},
+            )
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,9 @@
 """
-Tests for ClassifierAgent._handle_402_and_retry with mocked HTTP responses.
+Tests for ClassifierAgent._call_venice_api — no more 402 retry.
 
-The 402 retry flow is:
-  1. Initial Venice API call returns 402 (x402 balance insufficient)
-  2. _handle_402_and_retry POSTs to {base_url}/x402/top-up
-     - If that returns 402 too: logs suggested top-up amount, continues
-     - Otherwise: continues regardless
-  3. Retries the original POST to {base_url}/chat/completions
-     - If 200: parses JSON from choices[0].message.content
-     - If non-200: raises Exception
+The classifier now requires a VENICE_API_KEY and raises RuntimeError
+on any non-200 HTTP response. The old _handle_402_and_retry flow has
+been removed entirely — 402 is treated like any other error status.
 
 Mocking approach:
   - Use MagicMock for the session (session.post() is a regular method,
@@ -20,7 +15,7 @@ from __future__ import annotations
 
 import json
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
@@ -74,14 +69,6 @@ VALID_CLASSIFICATION_JSON = json.dumps({
     "notes": "",
 })
 
-PAYLOAD_EXAMPLE = {
-    "model": "zai-org-glm-5-1",
-    "messages": [
-        {"role": "system", "content": "You are a crypto tax classification AI."},
-        {"role": "user", "content": "Classify this transaction..."},
-    ],
-}
-
 
 # ──────────────────────────────────────────────────────
 # Fixtures
@@ -98,207 +85,116 @@ async def agent() -> AsyncGenerator[ClassifierAgent, None]:
         await a.close()
 
 
-@pytest_asyncio.fixture
-def mock_session() -> MagicMock:
-    """A fully mocked aiohttp.ClientSession.
-
-    Uses MagicMock (not AsyncMock) because session.post() is a regular
-    method — it returns a context manager, not a coroutine.
-    """
-    session = MagicMock(spec=aiohttp.ClientSession)
-    session.closed = False
-    return session
-
-
 # ──────────────────────────────────────────────────────
-# Direct _handle_402_and_retry tests
+# _call_venice_api tests (no 402 retry — all non-200 raises RuntimeError)
 # ──────────────────────────────────────────────────────
 
 
-class TestHandle402RetryDirect:
-    """Call _handle_402_and_retry() directly with a mocked session."""
+class TestCallVeniceApi:
+    """_call_venice_api() raises RuntimeError on non-200 responses."""
 
     @pytest.mark.asyncio
-    async def test_retry_succeeds_after_402(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Top-up not needed → retry succeeds → returns parsed JSON."""
-        mock_session.post.side_effect = [
-            mock_response(status=200),                       # top-up response
-            mock_venice_success(VALID_CLASSIFICATION_JSON),   # retry response
-        ]
+    async def test_200_returns_parsed_json(self, agent: ClassifierAgent):
+        """200 with valid JSON → returns parsed classification."""
+        mock_sess = MagicMock(spec=aiohttp.ClientSession)
+        mock_sess.closed = False
+        mock_sess.post.return_value = mock_venice_success(VALID_CLASSIFICATION_JSON)
+        agent._session = mock_sess
 
-        result = await agent._handle_402_and_retry(
-            session=mock_session,
-            base_url="https://api.venice.ai/api/v1",
-            payload=PAYLOAD_EXAMPLE,
-            headers={"Content-Type": "application/json"},
-        )
+        result = await agent._call_venice_api("Classify this transaction...")
 
         assert result["category"] == "SWAP"
         assert result["confidence"] == 0.95
         assert result["taxable"] is True
-        # Verify both POSTs were made
-        assert mock_session.post.call_count == 2
-        # First call should go to /x402/top-up
-        assert "x402/top-up" in mock_session.post.call_args_list[0][0][0]
-        # Second call should go to /chat/completions
-        assert "chat/completions" in mock_session.post.call_args_list[1][0][0]
 
     @pytest.mark.asyncio
-    async def test_topup_also_402_logs_suggestion(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Top-up endpoint also returns 402 — logs suggested amount, retries."""
-        topup_body = {"suggestedTopUpUsd": 10, "minimumTopUpUsd": 5}
-
-        mock_session.post.side_effect = [
-            mock_response(status=402, json_data=topup_body),  # top-up requires payment
-            mock_venice_success(VALID_CLASSIFICATION_JSON),   # retry succeeds
-        ]
-
-        result = await agent._handle_402_and_retry(
-            session=mock_session,
-            base_url="https://api.venice.ai/api/v1",
-            payload=PAYLOAD_EXAMPLE,
-            headers={"Content-Type": "application/json"},
+    async def test_402_raises_runtime_error(self, agent: ClassifierAgent):
+        """402 is treated as an error — raises RuntimeError."""
+        mock_sess = MagicMock(spec=aiohttp.ClientSession)
+        mock_sess.closed = False
+        mock_sess.post.return_value = mock_response(
+            status=402,
+            json_data={"error": "x402 balance insufficient"},
+            text="x402 balance insufficient",
         )
+        agent._session = mock_sess
 
-        assert result["category"] == "SWAP"
-        assert mock_session.post.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_retry_fails_raises_exception(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Retry after top-up still returns non-200 — raises Exception."""
-        mock_session.post.side_effect = [
-            mock_response(status=200),       # top-up succeeds
-            mock_response(
-                status=500,
-                text="Internal Server Error",
-                json_data={"error": "server_error"},
-            ),  # retry fails
-        ]
-
-        with pytest.raises(Exception, match="Venice API error after top-up: 500"):
-            await agent._handle_402_and_retry(
-                session=mock_session,
-                base_url="https://api.venice.ai/api/v1",
-                payload=PAYLOAD_EXAMPLE,
-                headers={"Content-Type": "application/json"},
-            )
-
-        assert mock_session.post.call_count == 2
+        with pytest.raises(RuntimeError, match="Venice API error 402"):
+            await agent._call_venice_api("Classify this transaction...")
 
     @pytest.mark.asyncio
-    async def test_topup_non_402_still_retries(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Top-up returns 200 but with 'top-up not available' — still retries."""
-        mock_session.post.side_effect = [
-            mock_response(status=200, json_data={"success": False, "error": "Top-up not available"}),
-            mock_venice_success(VALID_CLASSIFICATION_JSON),
-        ]
-
-        result = await agent._handle_402_and_retry(
-            session=mock_session,
-            base_url="https://api.venice.ai/api/v1",
-            payload=PAYLOAD_EXAMPLE,
-            headers={"Content-Type": "application/json"},
+    async def test_500_raises_runtime_error(self, agent: ClassifierAgent):
+        """500 Internal Server Error → raises RuntimeError."""
+        mock_sess = MagicMock(spec=aiohttp.ClientSession)
+        mock_sess.closed = False
+        mock_sess.post.return_value = mock_response(
+            status=500,
+            text="Internal Server Error",
         )
+        agent._session = mock_sess
 
-        assert result["category"] == "SWAP"
-        assert mock_session.post.call_count == 2
+        with pytest.raises(RuntimeError, match="Venice API error 500"):
+            await agent._call_venice_api("Classify...")
 
     @pytest.mark.asyncio
-    async def test_retry_success_with_invalid_json_raises(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Retry returns 200 but content is not valid JSON — raises JSONDecodeError."""
-        mock_session.post.side_effect = [
-            mock_response(status=200),                         # top-up
-            mock_venice_success("This is not valid JSON"),     # retry — bad JSON
-        ]
+    async def test_bad_json_response_raises(self, agent: ClassifierAgent):
+        """200 but invalid JSON content → raises JSONDecodeError."""
+        mock_sess = MagicMock(spec=aiohttp.ClientSession)
+        mock_sess.closed = False
+        mock_sess.post.return_value = mock_venice_success("NOT JSON")
+        agent._session = mock_sess
 
         with pytest.raises(json.JSONDecodeError):
-            await agent._handle_402_and_retry(
-                session=mock_session,
-                base_url="https://api.venice.ai/api/v1",
-                payload=PAYLOAD_EXAMPLE,
-                headers={"Content-Type": "application/json"},
-            )
+            await agent._call_venice_api("Classify...")
 
     @pytest.mark.asyncio
-    async def test_retry_missing_choices_key_raises(self, agent: ClassifierAgent, mock_session: MagicMock):
-        """Retry returns 200 but response missing 'choices' key — raises KeyError."""
-        mock_session.post.side_effect = [
-            mock_response(status=200),
-            mock_response(status=200, json_data={"not": "expected"}),  # missing choices
-        ]
+    async def test_missing_choices_raises(self, agent: ClassifierAgent):
+        """200 but response missing 'choices' key → raises KeyError."""
+        mock_sess = MagicMock(spec=aiohttp.ClientSession)
+        mock_sess.closed = False
+        mock_sess.post.return_value = mock_response(
+            status=200,
+            json_data={"not": "expected"},
+        )
+        agent._session = mock_sess
 
         with pytest.raises(KeyError):
-            await agent._handle_402_and_retry(
-                session=mock_session,
-                base_url="https://api.venice.ai/api/v1",
-                payload=PAYLOAD_EXAMPLE,
-                headers={"Content-Type": "application/json"},
-            )
-
-
-# ──────────────────────────────────────────────────────
-# Integration test — _call_venice_api triggers retry
-# ──────────────────────────────────────────────────────
-
-
-class TestCallVeniceApiTriggersRetry:
-    """_call_venice_api() dispatches to _handle_402_and_retry when Venice returns 402."""
+            await agent._call_venice_api("Classify...")
 
     @pytest.mark.asyncio
-    async def test_402_triggers_retry_path(self, agent: ClassifierAgent):
-        """When the initial POST returns 402, _call_venice_api delegates to retry."""
+    async def test_payload_contains_api_key(self, agent: ClassifierAgent):
+        """Verify the Authorization header is sent with the Bearer key."""
         mock_sess = MagicMock(spec=aiohttp.ClientSession)
         mock_sess.closed = False
-        mock_sess.post.side_effect = [
-            # First POST: initial Venice call → 402
-            mock_response(status=402, json_data={"error": "x402 balance insufficient"}),
-            # Second POST: top-up → 200
-            mock_response(status=200, json_data={"success": True}),
-            # Third POST: retry → 200 with valid classification
-            mock_venice_success(VALID_CLASSIFICATION_JSON),
-        ]
-
-        # Inject the mocked session
+        mock_sess.post.return_value = mock_venice_success(VALID_CLASSIFICATION_JSON)
         agent._session = mock_sess
 
-        result = await agent._call_venice_api("Classify this transaction...")
+        await agent._call_venice_api("Classify...")
 
-        assert result["category"] == "SWAP"
-        assert result["confidence"] == 0.95
-        assert mock_sess.post.call_count == 3
+        # Verify headers were passed
+        call_kwargs = mock_sess.post.call_args.kwargs
+        assert "headers" in call_kwargs
+        assert call_kwargs["headers"]["Authorization"] == "Bearer sk-test-fake"
 
     @pytest.mark.asyncio
-    async def test_initial_200_skips_retry(self, agent: ClassifierAgent):
-        """When the initial POST returns 200, _handle_402_and_retry is never called."""
+    async def test_reuses_shared_session(self, agent: ClassifierAgent):
+        """Multiple calls reuse the same session object."""
         mock_sess = MagicMock(spec=aiohttp.ClientSession)
         mock_sess.closed = False
-        mock_sess.post.side_effect = [
-            mock_venice_success(VALID_CLASSIFICATION_JSON),
-        ]
-
+        mock_sess.post.return_value = mock_venice_success(VALID_CLASSIFICATION_JSON)
         agent._session = mock_sess
 
-        result = await agent._call_venice_api("Classify this transaction...")
+        await agent._call_venice_api("First call")
+        await agent._call_venice_api("Second call")
 
-        # Should return directly without any retry
-        assert result["category"] == "SWAP"
-        assert mock_sess.post.call_count == 1  # Only the initial call
-
-    @pytest.mark.asyncio
-    async def test_retry_reuses_shared_session(self, agent: ClassifierAgent):
-        """Verify the retry path uses the agent's shared session, not a new one."""
-        mock_sess = MagicMock(spec=aiohttp.ClientSession)
-        mock_sess.closed = False
-        mock_sess.post.side_effect = [
-            mock_response(status=402),
-            mock_response(status=200),
-            mock_venice_success(VALID_CLASSIFICATION_JSON),
-        ]
-
-        agent._session = mock_sess
-
-        await agent._call_venice_api("Test prompt")
-
-        # All 3 POSTs should use the same session object
+        assert mock_sess.post.call_count == 2
         for call in mock_sess.post.call_args_list:
-            assert call[0][0].startswith("https://api.venice.ai/api/v1/")
+            assert "api.venice.ai/api/v1/chat/completions" in call[0][0]
+
+    @pytest.mark.asyncio
+    async def test_no_api_key_raises(self):
+        """No VENICE_API_KEY configured → raises RuntimeError."""
+        a = ClassifierAgent(config={})  # No api key
+        with pytest.raises(RuntimeError, match="No VENICE_API_KEY configured"):
+            await a._call_venice_api("Classify...")
+        await a.close()
