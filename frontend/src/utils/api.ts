@@ -335,11 +335,16 @@ class TaxFiApiClient {
 
   // WebSocket connection — only called from browser useEffects
   connectWebSocket(): WebSocket {
+    // If we have an explicit WS URL, use it
     if (this.config.wsUrl) {
       return new WebSocket(`${this.config.wsUrl}/ws`);
     }
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return new WebSocket(`${proto}//${window.location.host}/ws`);
+    // On Vercel: route through the same domain using wss://
+    const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8000';
+    // Vercel rewrites /api/* → Render, but WS needs direct Render URL
+    const renderUrl = process.env.NEXT_PUBLIC_RENDER_WS_URL || `${proto}//${host}`;
+    return new WebSocket(`${renderUrl}/ws`);
   }
 }
 
