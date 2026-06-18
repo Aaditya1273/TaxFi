@@ -47,7 +47,7 @@ export const defaultMetadata = {
     locale: 'en_US',
     url: SITE_URL,
     siteName: SITE_NAME,
-    title: `${SITE_NAME} \u2014 ${'AI Crypto Tax Agent'}`,
+    title: `${SITE_NAME} \ ${'AI Crypto Tax Agent'}`,
     description: SITE_DESCRIPTION,
     images: [
       {
@@ -62,7 +62,7 @@ export const defaultMetadata = {
     card: 'summary_large_image' as const,
     site: TWITTER_HANDLE,
     creator: TWITTER_HANDLE,
-    title: `${SITE_NAME} \u2014 AI Crypto Tax Agent`,
+    title: `${SITE_NAME} \ AI Crypto Tax Agent`,
     description: SITE_DESCRIPTION,
     images: [OG_IMAGE_URL],
   },
@@ -201,7 +201,7 @@ export function generateJsonLdSchema(opts: JsonLdOptions = {}): string {
           name: 'Is TaxFi non-custodial?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Yes. TaxFi uses ERC-7715 Advanced Permissions \u2014 you grant read-only access to your transaction history. We never have access to your private keys and cannot move your funds. Revoke access anytime from your wallet.',
+            text: 'Yes. TaxFi uses ERC-7715 Advanced Permissions \ you grant read-only access to your transaction history. We never have access to your private keys and cannot move your funds. Revoke access anytime from your wallet.',
           },
         },
         {
@@ -217,7 +217,7 @@ export function generateJsonLdSchema(opts: JsonLdOptions = {}): string {
           name: 'What chains do you support?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Ethereum, Base, and Arbitrum are supported at launch. We use Covalent and Alchemy as data sources with automatic fallback \u2014 if one provider is down, the other takes over seamlessly.',
+            text: 'Ethereum, Base, and Arbitrum are supported at launch. We use Covalent and Alchemy as data sources with automatic fallback \ if one provider is down, the other takes over seamlessly.',
           },
         },
         {
@@ -233,7 +233,7 @@ export function generateJsonLdSchema(opts: JsonLdOptions = {}): string {
           name: 'How do you classify transactions?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Every transaction is analyzed by Venice AI \u2014 a privacy-first inference API that runs in TEE environments. Your transaction data never trains public models and prompts are never stored. We support 20+ categories including swaps, airdrops, staking, LP events, and more.',
+            text: 'Every transaction is analyzed by Venice AI \ a privacy-first inference API that runs in TEE environments. Your transaction data never trains public models and prompts are never stored. We support 20+ categories including swaps, airdrops, staking, LP events, and more.',
           },
         },
       ],
@@ -278,13 +278,13 @@ export function generateJsonLdSchema(opts: JsonLdOptions = {}): string {
 
 export function getLandingPageMetadata() {
   return {
-    title: `${SITE_NAME} \u2014 AI Crypto Tax Agent That Pays for Itself`,
+    title: `${SITE_NAME} \ AI Crypto Tax Agent That Pays for Itself`,
     description: SITE_DESCRIPTION,
     alternates: {
       canonical: SITE_URL,
     },
     openGraph: {
-      title: `${SITE_NAME} \u2014 AI Crypto Tax Agent That Pays for Itself`,
+      title: `${SITE_NAME} \ AI Crypto Tax Agent That Pays for Itself`,
       description: SITE_DESCRIPTION,
       url: SITE_URL,
       images: [
@@ -292,7 +292,7 @@ export function getLandingPageMetadata() {
           url: OG_IMAGE_URL,
           width: 1200,
           height: 630,
-          alt: 'TaxFi \u2014 Your crypto tax agent that pays for itself',
+          alt: 'TaxFi \ Your crypto tax agent that pays for itself',
         },
       ],
     },
@@ -300,7 +300,7 @@ export function getLandingPageMetadata() {
       card: 'summary_large_image' as const,
       site: TWITTER_HANDLE,
       creator: TWITTER_HANDLE,
-      title: `${SITE_NAME} \u2014 AI Crypto Tax Agent That Pays for Itself`,
+      title: `${SITE_NAME} \ AI Crypto Tax Agent That Pays for Itself`,
       description: SITE_DESCRIPTION,
       images: [OG_IMAGE_URL],
     },

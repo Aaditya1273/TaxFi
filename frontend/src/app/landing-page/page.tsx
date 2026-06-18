@@ -7,7 +7,6 @@ import HowItWorks from './components/HowItWorks';
 import DashboardMockup from './components/DashboardMockup';
 import Features from './components/Features';
 import Comparison from './components/Comparison';
-import Testimonials from './components/Testimonials';
 import Pricing from './components/Pricing';
 import Security from './components/Security';
 import FAQ from './components/FAQ';
@@ -17,7 +16,7 @@ import ScrollProgress from './components/animations/ScrollProgress';
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-white text-gray-900 overflow-hidden">
+    <div className="min-h-screen bg-white text-gray-900 overflow-x-hidden" suppressHydrationWarning>
       <ScrollProgress />
       <Nav />
       <Hero />
@@ -26,7 +25,6 @@ export default function LandingPage() {
       <DashboardMockup />
       <Features />
       <Comparison />
-      <Testimonials />
       <Pricing />
       <Security />
       <FAQ />

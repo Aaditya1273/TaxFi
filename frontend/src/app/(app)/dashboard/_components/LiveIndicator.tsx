@@ -2,29 +2,22 @@
 
 interface LiveIndicatorProps {
   connected: boolean;
-  pulse?: boolean;
 }
 
-export default function LiveIndicator({ connected, pulse = true }: LiveIndicatorProps) {
+export default function LiveIndicator({ connected }: LiveIndicatorProps) {
   return (
     <div
-      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium backdrop-blur-sm border transition-all ${
+      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-500 ${
         connected
-          ? 'bg-emerald-50/80 border-emerald-200/60 text-emerald-600'
-          : 'bg-gray-50/80 border-gray-200/60 text-gray-500'
+          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+          : 'bg-gray-100 text-gray-500 border border-gray-200'
       }`}
     >
-      <span className="relative flex w-2.5 h-2.5">
-        <span
-          className={`absolute inline-flex w-full h-full rounded-full opacity-75 ${
-            connected && pulse ? 'animate-ping bg-emerald-400' : 'bg-gray-300'
-          }`}
-        />
-        <span
-          className={`relative inline-flex w-2.5 h-2.5 rounded-full ${
-            connected ? 'bg-emerald-500' : 'bg-gray-400'
-          }`}
-        />
+      <span className="relative flex h-2 w-2">
+        {connected && (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        )}
+        <span className={`relative inline-flex rounded-full h-2 w-2 ${connected ? 'bg-emerald-500' : 'bg-gray-400'}`} />
       </span>
       {connected ? 'Live' : 'Offline'}
     </div>

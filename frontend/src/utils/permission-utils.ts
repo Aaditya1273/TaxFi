@@ -22,7 +22,7 @@ const TAXFI_AGENT_ADDRESSES: Record<number, Address> = {
   1: '0x0000000000000000000000000000000000000000',      // Ethereum - TODO: deploy on mainnet
   8453: '0x0000000000000000000000000000000000000000',     // Base - TODO: deploy on mainnet
   42161: '0x0000000000000000000000000000000000000000',    // Arbitrum - TODO: deploy on mainnet
-  11155111: '0x401E5B592D1F56f335405079F13d49b81309f82f',  // Ethereum Sepolia ✅ deployed
+  11155111: '0x401E5B592D1F56f335405079F13d49b81309f82f',  // Ethereum Sepolia (deployed)
   31337: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',   // Local Hardhat (dev)
   84532: '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18',   // Base Sepolia - dev
 };

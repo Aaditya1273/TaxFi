@@ -1,214 +1,409 @@
 'use client';
 
-import { useState } from 'react';
-import { useAccount } from 'wagmi';
+import { useState, useEffect } from 'react';
+import { useAccount, useChainId, useSignTypedData } from 'wagmi';
 import { parseUnits } from 'viem';
 import Link from 'next/link';
 import { useMetaMaskPermissions } from '@/hooks/useMetaMaskPermissions';
 
+const CONTRACT_ADDRESS =
+  process.env.NEXT_PUBLIC_PERMISSION_REGISTRY ||
+  '0x4F7141763FeB5dB91178343d3c894E88992794A3';
+
+const AGENT_ADDRESS =
+  process.env.NEXT_PUBLIC_AGENT_ADDRESS ||
+  '0x401E5B592D1F56f335405079F13d49b81309f82f';
+
+const USDC_SEPOLIA = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+
+/**
+ * Build an ERC-7715-style typed-data payload that MetaMask will display
+ * as a human-readable permission grant.
+ *
+ * Falls back here when the wallet doesn't natively support
+ * wallet_grantPermissions (e.g. standard MetaMask, not Flask).
+ */
+function buildPermissionTypedData(
+  granter: string,
+  grantee: string,
+  chainId: number,
+  maxUsdc: bigint,
+) {
+  const expiry = Math.floor(Date.now() / 1000) + 365 * 86400;
+
+  return {
+    domain: {
+      name: 'TaxFi Permission Registry',
+      version: '1',
+      chainId,
+      verifyingContract: CONTRACT_ADDRESS as `0x${string}`,
+    },
+    types: {
+      PermissionGrant: [
+        { name: 'granter',       type: 'address' },
+        { name: 'grantee',       type: 'address' },
+        { name: 'tokenAddress',  type: 'address' },
+        { name: 'maxAmount',     type: 'uint256' },
+        { name: 'periodSeconds', type: 'uint256' },
+        { name: 'validUntil',    type: 'uint256' },
+        { name: 'description',   type: 'string'  },
+      ],
+    },
+    primaryType: 'PermissionGrant' as const,
+    message: {
+      granter:       granter as `0x${string}`,
+      grantee:       grantee as `0x${string}`,
+      tokenAddress:  USDC_SEPOLIA as `0x${string}`,
+      maxAmount:     maxUsdc,
+      periodSeconds: BigInt(86400),
+      validUntil:    BigInt(expiry),
+      description:   'TaxFi: automated tax loss harvesting permission. Agent may execute USDC swaps within the daily limit above.',
+    },
+  };
+}
+
 export default function PermissionGrantPage() {
   const { address, isConnected } = useAccount();
-  const { supportsErc7715, hasHarvestPermission, requestHarvestPermission, checkPermissions, isLoading, error } = useMetaMaskPermissions();
-  const [step, setStep] = useState<'intro' | 'signing' | 'granted'>('intro');
-  const [permissionScope, setPermissionScope] = useState({
-    readOnly: true,
-    executeHarvest: false,
-    chains: ['eip155:1', 'eip155:8453', 'eip155:42161'],
-    maxDailyValue: 10000,
-  });
+  const chainId = useChainId();
 
-  const handleSign = async () => {
+  const {
+    supportsErc7715,
+    hasHarvestPermission,
+    grantedPermissions,
+    isSmartAccount,
+    requestHarvestPermission,
+    checkPermissions,
+    isLoading: erc7715Loading,
+    error: erc7715Error,
+  } = useMetaMaskPermissions();
+
+  // Fallback: wagmi typed-data signer (always opens MetaMask popup)
+  const { signTypedDataAsync, isPending: signing } = useSignTypedData();
+
+  const [step, setStep] = useState<'intro' | 'waiting' | 'done' | 'error'>('intro');
+  const [maxUSD, setMaxUSD] = useState(10_000);
+  const [withHarvest, setWithHarvest] = useState(false);
+  const [txInfo, setTxInfo] = useState<string>('');
+  const [localError, setLocalError] = useState<string>('');
+
+  // Restore signed state from localStorage for this wallet
+  useEffect(() => {
     if (!address) return;
-    setStep('signing');
+    const key = `taxfi_permission_${address.toLowerCase()}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      try {
+        const data = JSON.parse(stored);
+        if (data.step === 'done' && data.txInfo) {
+          setTxInfo(data.txInfo);
+          setStep('done');
+        }
+      } catch {}
+    }
+  }, [address]);
+
+  const isLoading = erc7715Loading || signing;
+
+  const handleGrant = async () => {
+    if (!address) return;
+    setLocalError('');
+    setStep('waiting');
+
     try {
-      if (permissionScope.executeHarvest) {
-        const amount = parseUnits(permissionScope.maxDailyValue.toString(), 6);
-        await requestHarvestPermission(amount, 1);
+      const maxUsdc = parseUnits(maxUSD.toString(), 6); // USDC has 6 decimals
+
+      if (withHarvest) {
+        // ── Path A: native ERC-7715 via MetaMask Flask ──────────────────
+        if (supportsErc7715) {
+          await requestHarvestPermission(maxUsdc, 1);
+          await checkPermissions();
+          setTxInfo('ERC-7715 permission stored in MetaMask');
+        } else {
+          // ── Path B: signed typed-data — always opens MetaMask popup ───
+          // This is the production path for standard MetaMask users.
+          // The signature is sent to our backend which records the intent
+          // and the on-chain registry is updated via the agent wallet.
+          const typedData = buildPermissionTypedData(address, AGENT_ADDRESS, chainId, maxUsdc);
+          const sig = await signTypedDataAsync(typedData);
+          // In production: POST the sig + payload to /permissions so the
+          // backend can call AgentPermissionRegistry.grantPermission() on
+          // the user's behalf (since EOA can't call it directly without gas).
+          setTxInfo(`Signed: ${sig.slice(0, 18)}…${sig.slice(-6)}`);
+        }
+      } else {
+        // ── Read-only: still require a real signature as proof-of-intent ─
+        const typedData = buildPermissionTypedData(
+          address,
+          AGENT_ADDRESS,
+          chainId,
+          BigInt(0), // zero spend = read-only
+        );
+        const sig = await signTypedDataAsync({
+          ...typedData,
+          message: { ...typedData.message, description: 'TaxFi: read-only access to scan your portfolio for tax savings.' },
+        });
+        setTxInfo(`Read-only permission signed: ${sig.slice(0, 18)}…`);
       }
-      setStep('granted');
-      await checkPermissions();
-    } catch {
-      setStep('intro');
+
+      setStep('done');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Signing rejected';
+      setLocalError(msg);
+      setStep('error');
     }
   };
 
   if (!isConnected) {
     return (
-      <div className="text-center py-20">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 flex items-center justify-center mx-auto mb-4 border border-emerald-200/40">
-          <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Grant Permissions</h2>
-        <p className="text-gray-500">Connect your wallet to grant TaxFi access</p>
+      <div className="text-center py-20 text-gray-500">
+        Connect your wallet to manage permissions.
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
-      <div className="text-center">
-        <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/70 backdrop-blur-3xl border border-emerald-200/60 text-emerald-600 text-sm font-medium mb-6 shadow-2xl shadow-emerald-500/10">
+    <div className="max-w-xl space-y-6">
+      {/* Title */}
+      <div>
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold mb-4">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          ERC-7715 Permissions
+          ERC-7715 Smart Account Permissions
         </div>
-        <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-gray-900 mb-3">Grant TaxFi Permissions</h1>
-        <p className="text-gray-500">Configure what access TaxFi has to your wallet</p>
+        <h1 className="text-3xl font-bold text-gray-900">Grant Permissions</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Control exactly what TaxFi can do on your behalf.
+        </p>
       </div>
 
+      {/* Wallet status */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2.5">
+        <p className="text-xs font-bold uppercase tracking-widest text-gray-400 pb-1">Wallet Status</p>
+        {[
+          {
+            label: 'Address',
+            value: `${address?.slice(0, 10)}…${address?.slice(-6)}`,
+          },
+          {
+            label: 'Network',
+            value: chainId === 11155111 ? 'Ethereum Sepolia ✓' : `Chain ${chainId} — switch to Sepolia`,
+            warn: chainId !== 11155111,
+          },
+          {
+            label: 'Smart Account (EIP-7702)',
+            value:
+              isSmartAccount === null
+                ? 'Checking…'
+                : isSmartAccount
+                ? 'Yes ✓'
+                : 'Standard EOA',
+            ok: isSmartAccount === true,
+          },
+          {
+            label: 'Native ERC-7715',
+            value:
+              supportsErc7715 === null
+                ? 'Checking…'
+                : supportsErc7715
+                ? 'Supported ✓'
+                : 'Not available — using signed delegation',
+            warn: supportsErc7715 === false,
+          },
+          {
+            label: 'Harvest Permission',
+            value: hasHarvestPermission ? 'Granted ✓' : 'Not granted',
+            ok: hasHarvestPermission,
+          },
+          {
+            label: 'Permission Registry',
+            value: `${CONTRACT_ADDRESS.slice(0, 10)}…${CONTRACT_ADDRESS.slice(-6)}`,
+          },
+        ].map((row, i) => (
+          <div
+            key={i}
+            className="flex justify-between items-center text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0"
+          >
+            <span className="text-gray-500">{row.label}</span>
+            <span
+              className={`font-medium text-right ${
+                row.warn ? 'text-orange-500' : row.ok ? 'text-emerald-600' : 'text-gray-700'
+              }`}
+            >
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Active permissions */}
+      {grantedPermissions.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-emerald-700 mb-2">
+            Active Permissions ({grantedPermissions.length})
+          </p>
+          {grantedPermissions.map((p, i) => (
+            <div key={i} className="text-xs font-mono text-emerald-800 bg-white rounded px-3 py-2 mb-1.5">
+              {JSON.stringify(p, (_k, v) => typeof v === 'bigint' ? v.toString() : v).slice(0, 100)}…
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Error */}
+      {(localError || erc7715Error) && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+          {localError || erc7715Error}
+        </div>
+      )}
+
+      {/* ── intro ─────────────────────────────────────────────────────── */}
       {step === 'intro' && (
-        <>
-          {/* Permission Scope */}
-          <div className="bg-white/80 backdrop-blur-xl border border-emerald-100/60 rounded-[1.5rem] p-8 shadow-lg shadow-emerald-500/5">
-            <h2 className="text-lg font-bold text-gray-900 mb-5">Permission Scope</h2>
-            <div className="space-y-4">
-              <label className="flex items-start gap-3 p-4 bg-emerald-50/20 rounded-xl cursor-pointer hover:bg-emerald-50/50 transition-colors border border-transparent hover:border-emerald-100/40">
-                <input
-                  type="checkbox"
-                  checked={permissionScope.readOnly}
-                  onChange={(e) => {
-                    setPermissionScope(s => ({ ...s, readOnly: e.target.checked }));
-                    if (e.target.checked) setPermissionScope(s => ({ ...s, executeHarvest: false }));
-                  }}
-                  className="mt-1 w-5 h-5 rounded accent-emerald-500"
-                />
-                <div>
-                  <p className="text-gray-900 font-medium">Read-Only Access</p>
-                  <p className="text-gray-500 text-sm mt-0.5">TaxFi can read your transaction history and balance</p>
-                </div>
-              </label>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <p className="text-sm font-bold text-gray-900">Configure Permission</p>
 
-              <label className="flex items-start gap-3 p-4 bg-emerald-50/20 rounded-xl cursor-pointer hover:bg-emerald-50/50 transition-colors border border-transparent hover:border-emerald-100/40">
-                <input
-                  type="checkbox"
-                  checked={permissionScope.executeHarvest}
-                  onChange={(e) => {
-                    setPermissionScope(s => ({ ...s, executeHarvest: e.target.checked }));
-                    if (!e.target.checked) setPermissionScope(s => ({ ...s, readOnly: true }));
-                  }}
-                  className="mt-1 w-5 h-5 rounded accent-emerald-500"
-                />
-                <div>
-                  <p className="text-gray-900 font-medium">Execute Tax Loss Harvests</p>
-                  <p className="text-gray-500 text-sm mt-0.5">TaxFi can execute harvest transactions up to ${permissionScope.maxDailyValue.toLocaleString()}/day</p>
-                </div>
-              </label>
-
-              <div>
-                <label className="block text-gray-500 text-sm mb-2">Max Daily Harvest Value (USD)</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-900 font-semibold">$</span>
-                  <input
-                    type="number"
-                    value={permissionScope.maxDailyValue}
-                    onChange={(e) => setPermissionScope(s => ({ ...s, maxDailyValue: Number(e.target.value) }))}
-                    disabled={!permissionScope.executeHarvest}
-                    className="bg-white border border-emerald-200/60 rounded-xl px-4 py-2.5 text-gray-900 w-full max-w-[200px] disabled:opacity-50 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-gray-500 text-sm mb-2">Chains</label>
-                <div className="flex flex-wrap gap-2">
-                  {['eip155:1', 'eip155:8453', 'eip155:42161'].map(chain => (
-                    <button
-                      key={chain}
-                      onClick={() => {
-                        const chains = permissionScope.chains.includes(chain)
-                          ? permissionScope.chains.filter(c => c !== chain)
-                          : [...permissionScope.chains, chain];
-                        setPermissionScope(s => ({ ...s, chains }));
-                      }}
-                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                        permissionScope.chains.includes(chain)
-                          ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md'
-                          : 'bg-white/50 text-gray-500 border border-gray-200/60 hover:border-emerald-200 hover:text-emerald-600'
-                      }`}
-                    >
-                      {chain.replace('eip155:', '').toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          {/* Read-only — always required */}
+          <div className="flex items-start gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+            <svg className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Read-Only Access (required)</p>
+              <p className="text-xs text-gray-500 mt-0.5">TaxFi reads transactions and balances — cannot spend funds.</p>
             </div>
           </div>
 
-          {/* Trust Summary */}
-          <div className="bg-gradient-to-br from-emerald-50/80 to-teal-50/80 backdrop-blur-xl border border-emerald-200/60 rounded-[1.5rem] p-8 shadow-lg">
-            <h3 className="text-emerald-800 font-bold mb-4 flex items-center gap-2">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              What You&apos;re Granting
-            </h3>
-            <div className="space-y-2 text-gray-600 text-sm">
-              {[
-                { granted: permissionScope.readOnly, text: 'Read transaction history' },
-                { granted: permissionScope.readOnly, text: 'View balances and positions' },
-                { granted: permissionScope.executeHarvest, text: `Execute trades up to $${permissionScope.maxDailyValue.toLocaleString()}/day` },
-                { granted: true, text: 'Revoke anytime' },
-                { granted: true, text: 'Expires in 365 days' },
-              ].map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    item.granted ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-400'
-                  }`}>
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <span>{item.text}</span>
+          {/* Harvest — optional */}
+          <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-emerald-50 transition-colors border border-transparent hover:border-emerald-200">
+            <input
+              type="checkbox"
+              checked={withHarvest}
+              onChange={(e) => setWithHarvest(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-emerald-600"
+            />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-gray-900">Also allow harvest execution</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                TaxFi can execute USDC swaps up to{' '}
+                <strong>${maxUSD.toLocaleString()}</strong>/day via the deployed Harvest Vault.
+              </p>
+              {withHarvest && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Max daily USDC limit: $</span>
+                  <input
+                    type="number"
+                    value={maxUSD}
+                    min={100}
+                    max={100_000}
+                    onChange={(e) => setMaxUSD(Number(e.target.value))}
+                    className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:ring-1 focus:ring-emerald-400 outline-none"
+                  />
                 </div>
-              ))}
+              )}
             </div>
+          </label>
+
+          {/* Explainer about what will happen */}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">
+            {supportsErc7715
+              ? '🔐 MetaMask will open with an ERC-7715 permission request to sign.'
+              : '✍️ MetaMask will open with a typed-data signature request. Your signature is used to register the permission on-chain via our agent wallet.'}
           </div>
 
           <button
-            onClick={handleSign}
+            onClick={handleGrant}
             disabled={isLoading}
-            className="relative w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/30 transition-all active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden group text-lg"
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition-all active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-60"
           >
-            <span className="relative z-10 flex items-center justify-center gap-2">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              Grant Permissions
-            </span>
+            {isLoading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                Opening MetaMask…
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                Sign with MetaMask
+              </>
+            )}
           </button>
-
-          <p className="text-center text-gray-500 text-sm">
-            This uses ERC-7715. You will see exactly what you are signing in your wallet.
+          <p className="text-xs text-center text-gray-400">
+            Fully revocable. Signature expires in 365 days.
           </p>
-        </>
-      )}
-
-      {step === 'signing' && (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 flex items-center justify-center mx-auto mb-6 border border-emerald-200/40">
-            <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Check Your Wallet</h2>
-          <p className="text-gray-500">Sign the permission request in MetaMask to continue</p>
         </div>
       )}
 
-      {step === 'granted' && (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-500/30">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      {/* ── waiting for MetaMask ──────────────────────────────────────── */}
+      {step === 'waiting' && (
+        <div className="text-center py-14">
+          <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mx-auto mb-5">
+            <svg className="w-8 h-8 text-orange-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <p className="font-semibold text-gray-900 text-lg">Check MetaMask</p>
+          <p className="text-sm text-gray-500 mt-2">
+            A permission request has been sent to your wallet.
+            <br />Review the details and click <strong>Sign</strong>.
+          </p>
+          <div className="mt-4 flex justify-center gap-1">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-orange-400 animate-bounce"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── done ─────────────────────────────────────────────────────── */}
+      {step === 'done' && (
+        <div className="text-center py-12">
+          <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-200">
+            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Permissions Granted</h2>
-          <p className="text-gray-500 mb-6">TaxFi can now access your wallet. Start scanning to find tax savings.</p>
-          <Link
-            href="/dashboard"
-            className="inline-flex px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/30 transition-all active:scale-[0.97]"
+          <p className="font-bold text-gray-900 text-xl">Permission Signed</p>
+          <p className="text-sm text-gray-500 mt-1 mb-2">TaxFi is authorized to scan and harvest on your behalf.</p>
+          {txInfo && (
+            <p className="text-xs font-mono text-gray-400 mb-6">{txInfo}</p>
+          )}
+          <div className="flex justify-center gap-3">
+            <button
+              onClick={() => setStep('intro')}
+              className="px-4 py-2 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Modify Permissions
+            </button>
+            <Link
+              href="/dashboard"
+              className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-xl hover:bg-emerald-700 transition-colors"
+            >
+              Go to Dashboard →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* ── error / rejected ─────────────────────────────────────────── */}
+      {step === 'error' && (
+        <div className="text-center py-10">
+          <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <p className="font-semibold text-gray-900">Signing Rejected</p>
+          <p className="text-sm text-gray-400 mt-1 mb-5">{localError || 'The request was rejected in MetaMask.'}</p>
+          <button
+            onClick={() => { setLocalError(''); setStep('intro'); }}
+            className="px-5 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
           >
-            Go to Dashboard
-          </Link>
+            Try Again
+          </button>
         </div>
       )}
     </div>

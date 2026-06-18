@@ -241,7 +241,7 @@ export const TESTIMONIALS: Testimonial[] = [
 export const FAQS: FAQItem[] = [
   {
     q: 'Is TaxFi non-custodial?',
-    a: 'Yes. TaxFi uses ERC-7715 Advanced Permissions \u2014 you grant read-only access to your transaction history. We never have access to your private keys and cannot move your funds. Revoke access anytime from your wallet.',
+    a: 'Yes. TaxFi uses ERC-7715 Advanced Permissions \ you grant read-only access to your transaction history. We never have access to your private keys and cannot move your funds. Revoke access anytime from your wallet.',
   },
   {
     q: 'How does the 5% fee work?',
@@ -249,11 +249,11 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: 'What chains do you support?',
-    a: 'Ethereum, Base, and Arbitrum are supported at launch. We use Covalent and Alchemy as data sources with automatic fallback \u2014 if one provider is down, the other takes over seamlessly.',
+    a: 'Ethereum, Base, and Arbitrum are supported at launch. We use Covalent and Alchemy as data sources with automatic fallback \ if one provider is down, the other takes over seamlessly.',
   },
   {
     q: 'How do you classify transactions?',
-    a: 'Every transaction is analyzed by Venice AI \u2014 a privacy-first inference API that runs in TEE environments. Your transaction data never trains public models and prompts are never stored. We support 20+ categories including swaps, airdrops, staking, LP events, and more.',
+    a: 'Every transaction is analyzed by Venice AI \ a privacy-first inference API that runs in TEE environments. Your transaction data never trains public models and prompts are never stored. We support 20+ categories including swaps, airdrops, staking, LP events, and more.',
   },
   {
     q: 'Do I need ETH for gas?',
@@ -299,7 +299,7 @@ export const SECURITY_ITEMS: SecurityItem[] = [
   {
     icon: '',
     title: 'Gasless via 1Shot',
-    desc: 'All transactions are relayed through the 1Shot API. Gas paid in USDC from harvested proceeds \u2014 never ETH.',
+    desc: 'All transactions are relayed through the 1Shot API. Gas paid in USDC from harvested proceeds \ never ETH.',
   },
 ];
 

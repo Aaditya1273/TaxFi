@@ -1,12 +1,13 @@
 import type { Metadata, Viewport } from 'next';
 import { Providers } from '../providers';
+import PageTransition from '../components/PageTransition';
 import '../index.css';
 import { defaultMetadata } from '../lib/seo';
 
 export const metadata: Metadata = {
   ...defaultMetadata,
   title: {
-    default: 'TaxFi \u2014 AI Crypto Tax Agent That Pays for Itself',
+    default: 'TaxFi AI Crypto Tax Agent That Pays for Itself',
     template: '%s | TaxFi',
   },
   icons: {
@@ -40,9 +41,11 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
         <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
       </head>
-      <body className="font-display antialiased">
+      <body className="font-display antialiased" suppressHydrationWarning>
         <Providers>
-          {children}
+          <PageTransition>
+            {children}
+          </PageTransition>
         </Providers>
       </body>
     </html>

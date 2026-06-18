@@ -32,10 +32,10 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const ICONS: Record<ToastType, string> = {
-  success: '✅',
-  error: '❌',
-  info: 'ℹ️',
-  warning: '⚠️',
+  success: 'S',
+  error: 'E',
+  info: 'I',
+  warning: 'W',
 };
 
 const COLORS: Record<ToastType, string> = {
@@ -100,7 +100,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3 min-w-0">
-                <span className="text-lg flex-shrink-0">{ICONS[toast.type]}</span>
+                <span className="w-6 h-6 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold text-white bg-white/10">{ICONS[toast.type]}</span>
                 <div className="min-w-0">
                   <p className="text-white font-medium text-sm leading-tight">{toast.title}</p>
                   {toast.message && (
