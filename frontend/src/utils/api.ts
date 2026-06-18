@@ -99,15 +99,12 @@ export interface ApiConfig {
 }
 
 const getDefaultConfig = (): ApiConfig => {
-  // In production (Vercel frontend + Render backend), NEXT_PUBLIC_API_URL
-  // must be set to the Render backend URL (e.g. https://taxfi-api.onrender.com).
-  // In dev mode, it falls back to localhost.
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || apiUrl.replace(/^http/, 'ws') || 'ws://localhost:8000';
-  return {
-    baseUrl: apiUrl,
-    wsUrl: wsUrl,
-  };
+  // On Vercel: NEXT_PUBLIC_API_URL is empty — requests go through /api/* rewrites to Render.
+  // Locally: NEXT_PUBLIC_API_URL=http://localhost:8000
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL
+    || (apiUrl ? apiUrl.replace(/^http/, 'ws') : '');
+  return { baseUrl: apiUrl, wsUrl };
 };
 
 class TaxFiApiClient {
