@@ -65,13 +65,16 @@ class OneshotClient:
 
     async def get_capabilities(self) -> dict:
         """
-        Discover relayer capabilities for the target chain.
+        Discover relayer capabilities for the target chain from the real 1Shot API.
 
         Returns:
             - targetAddress: Address to delegate to
             - feeCollector: Address for fee payment
             - tokens: Accepted ERC-20 payment tokens
             - minFee: Minimum fee in token atoms
+
+        Raises:
+            RuntimeError: If the 1Shot relayer API is unreachable or returns an error
         """
         # Cache for 5 minutes
         if self._capabilities_cache and time.time() - self._capabilities_cached_at < 300:
@@ -89,26 +92,24 @@ class OneshotClient:
             "params": [str(chain_id_num)],
         }
 
-        try:
-            async with session.post(relayer_url, json=payload) as resp:
-                if resp.status != 200:
-                    raise Exception(f"Capabilities error: {resp.status}")
-                data = await resp.json()
-                result = data.get("result", {})
-                chain_key = str(chain_id_num)
-                self._capabilities_cache = result.get(chain_key, {})
-                self._capabilities_cached_at = time.time()
-                return self._capabilities_cache
-        except Exception as e:
-            # Return sensible defaults for development
-            return {
-                "targetAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-                "feeCollector": "0x1111111111111111111111111111111111111111",
-                "tokens": [
-                    {"address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", "symbol": "USDC", "decimals": "6"}
-                ],
-                "minFee": "10000",  # $0.01 in USDC
-            }
+        async with session.post(relayer_url, json=payload) as resp:
+            if resp.status != 200:
+                error_body = await resp.text()
+                raise RuntimeError(
+                    f"1Shot relayer capabilities API returned HTTP {resp.status}: {error_body}"
+                )
+            data = await resp.json()
+            result = data.get("result", {})
+            chain_key = str(chain_id_num)
+            capabilities = result.get(chain_key, {})
+            if not capabilities:
+                raise RuntimeError(
+                    f"1Shot relayer returned empty capabilities for chain {chain_id_num}. "
+                    f"Full response: {data}"
+                )
+            self._capabilities_cache = capabilities
+            self._capabilities_cached_at = time.time()
+            return self._capabilities_cache
 
     async def estimate_fee(
         self,
@@ -116,12 +117,16 @@ class OneshotClient:
         chain_id: Optional[str] = None,
     ) -> dict:
         """
-        Estimate relayer fee for a harvest transaction.
+        Estimate relayer fee for a harvest transaction from the real 1Shot API.
 
         Uses relayer_estimate7710Transaction for a price-locked quote.
+        Raises an error if the API is unreachable — no hardcoded fee fallback.
         """
         target_chain = chain_id or self.chain_id
         relayer_url = SUPPORTED_CHAINS.get(target_chain, {}).get("relayer", RELAYER_TESTNET)
+        if not relayer_url:
+            raise RuntimeError(f"No 1Shot relayer URL configured for chain {target_chain}")
+
         session = await self.get_session()
 
         chain_id_num = int(target_chain.split(":")[1])
@@ -139,22 +144,26 @@ class OneshotClient:
             }],
         }
 
-        try:
-            async with session.post(relayer_url, json=payload) as resp:
-                if resp.status != 200:
-                    return self._default_fee_estimate()
-                data = await resp.json()
-                result = data.get("result", {})
+        async with session.post(relayer_url, json=payload) as resp:
+            if resp.status != 200:
+                error_body = await resp.text()
+                raise RuntimeError(
+                    f"1Shot relayer fee estimate returned HTTP {resp.status}: {error_body}"
+                )
+            data = await resp.json()
+            result = data.get("result", {})
 
-                return {
-                    "success": result.get("success", False),
-                    "required_payment": result.get("requiredPaymentAmount", "1000000"),
-                    "gas_used": result.get("gasUsed"),
-                    "context": result.get("context"),
-                    "error": result.get("error"),
-                }
-        except Exception:
-            return self._default_fee_estimate()
+            if not result.get("success", False):
+                raise RuntimeError(
+                    f"1Shot relayer fee estimation failed: {result.get('error', 'unknown error')}"
+                )
+
+            return {
+                "success": True,
+                "required_payment": result.get("requiredPaymentAmount", "1000000"),
+                "gas_used": result.get("gasUsed"),
+                "context": result.get("context"),
+            }
 
     async def send_transaction(
         self,
@@ -215,28 +224,32 @@ class OneshotClient:
     async def _do_send_transaction(
         self, payload: dict, relayer_url: str, target_chain: str, memo: str
     ) -> dict:
-        """Internal send implementation with circuit breaker protection."""
-        session = await self.get_session()
-        try:
-            async with session.post(relayer_url, json=payload) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    return {
-                        "success": False,
-                        "error": f"Send error {resp.status}: {error_text}",
-                    }
-                data = await resp.json()
-                task_id = data.get("result")
+        """Submit a transaction to the 1Shot relayer and return the result.
 
-                return {
-                    "success": True,
-                    "task_id": task_id,
-                    "chain_id": target_chain,
-                    "memo": memo or f"taxfi-harvest-{int(time.time())}",
-                    "status": "submitted",
-                }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        Raises on network or API errors — no silent error swallowing.
+        """
+        session = await self.get_session()
+        async with session.post(relayer_url, json=payload) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"1Shot relayer send returned HTTP {resp.status}: {error_text}"
+                )
+            data = await resp.json()
+            task_id = data.get("result")
+
+            if not task_id:
+                raise RuntimeError(
+                    f"1Shot relayer send returned no task_id. Response: {data}"
+                )
+
+            return {
+                "success": True,
+                "task_id": task_id,
+                "chain_id": target_chain,
+                "memo": memo or f"taxfi-harvest-{int(time.time())}",
+                "status": "submitted",
+            }
 
     async def check_status(self, task_id: str, chain_id: Optional[str] = None) -> dict:
         """
@@ -325,15 +338,6 @@ class OneshotClient:
         }
 
         return delegation
-
-    def _default_fee_estimate(self) -> dict:
-        """Return default fee estimate for development."""
-        return {
-            "success": True,
-            "required_payment": "1000000",  # $1 USDC
-            "context": None,
-            "note": "Using default fee estimate",
-        }
 
     @staticmethod
     def _status_label(code: int) -> str:

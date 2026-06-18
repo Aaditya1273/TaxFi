@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+from backend.integrations.price_oracle import PriceOracle
 from .base_agent import BaseAgent, AgentResult
 
 
@@ -65,6 +66,11 @@ class BasisAgent(BaseAgent):
         self.method = CostBasisMethod(method_str) if method_str in CostBasisMethod._member_map_ else CostBasisMethod.HIFO
         self.ledgers: dict[str, CostBasisLedger] = {}
         self._lot_counter = 0
+        self._price_oracle: Optional[PriceOracle] = None
+
+    def set_price_oracle(self, oracle: PriceOracle) -> None:
+        """Set the price oracle for fetching real market prices."""
+        self._price_oracle = oracle
 
     async def process(self, classified_txns: list[dict], **kwargs) -> AgentResult:
         """
@@ -95,11 +101,11 @@ class BasisAgent(BaseAgent):
                 gain_loss_total += result
             elif category in ("AIRDROP", "STAKING_REWARD", "YIELD_HARVEST", "INTEREST"):
                 # Acquisition event at FMV
-                self._process_acquisition(txn, is_income=True)
+                await self._process_acquisition(txn, is_income=True)
                 acquisitions += 1
             elif category in ("BORROW",):
                 # Loan - not taxable, but track
-                self._process_acquisition(txn, is_income=False)
+                await self._process_acquisition(txn, is_income=False)
                 acquisitions += 1
             elif category in ("TRANSFER_SELF",):
                 # Self-transfer - carry cost basis
@@ -133,16 +139,29 @@ class BasisAgent(BaseAgent):
             )
         return self.ledgers[asset]
 
-    def _process_acquisition(self, txn: dict, is_income: bool = False) -> AcquisitionLot:
+    async def _process_acquisition(self, txn: dict, is_income: bool = False) -> AcquisitionLot:
         """Process an acquisition event."""
-        ledger = self._get_ledger(txn.get("token_symbol", "UNKNOWN"))
-        amount = float(txn.get("value", 0))
-        rate = float(txn.get("price_usd", txn.get("classification", {}).get("estimated_price", 0)))
+        token_symbol = txn.get("token_symbol") or txn.get("asset", "UNKNOWN")
+        if not token_symbol or token_symbol == "UNKNOWN":
+            token_symbol = txn.get("classification", {}).get("cost_basis_asset", "UNKNOWN")
+
+        ledger = self._get_ledger(token_symbol)
+
+        # Use human-readable amount (already normalized by IngestAgent)
+        amount = float(txn.get("value", 0) or 0)
+        if amount == 0:
+            return None  # Skip zero-value acquisitions
+
+        # Prefer USD value from Covalent, fallback to price oracle
+        value_usd = float(txn.get("value_usd", 0) or 0)
+        if value_usd > 0 and amount > 0:
+            rate = value_usd / amount
+        else:
+            rate = float(txn.get("price_usd", txn.get("classification", {}).get("estimated_price", 0)) or 0)
 
         if rate == 0 and is_income:
-            # For income events without price, fetch from oracle
-            rate = self._fetch_price(
-                txn.get("token_symbol", "UNKNOWN"),
+            rate = await self._fetch_price(
+                token_symbol,
                 txn.get("timestamp", ""),
             )
 
@@ -155,7 +174,7 @@ class BasisAgent(BaseAgent):
             cost_basis=amount * rate,
             tx_hash=txn.get("tx_hash", ""),
             chain_id=txn.get("chain_id", ""),
-            asset=txn.get("token_symbol", "UNKNOWN"),
+            asset=token_symbol,
             lot_id=f"lot_{self._lot_counter}_{txn.get('tx_hash', '')[:8]}",
         )
 
@@ -258,23 +277,50 @@ class BasisAgent(BaseAgent):
 
         return available
 
-    def _fetch_price(self, asset: str, timestamp: str) -> float:
+    async def _fetch_price(self, asset: str, timestamp: int | str) -> float:
         """
-        Fetch historical price for an asset from price oracles.
-        Uses a hardcoded price map for development.
-        In production, replace with a real price oracle (Coingecko, DefiLlama, etc.).
+        Fetch real market price for an asset from the PriceOracle.
+
+        Uses CoinGecko API (no key needed) then Covalent API (key in .env)
+        for real-time crypto prices. Raises an error if the price cannot
+        be fetched — no fallback to hardcoded values.
+
+        Returns:
+            Current price in USD
+
+        Raises:
+            RuntimeError: If no PriceOracle is configured or if the price
+                         cannot be fetched from any real data source
         """
-        from datetime import datetime, timezone
-        # Simple price oracle lookup - in production, use Coingecko or DefiLlama
-        price_map = {
-            "ETH": 3200.0,
-            "USDC": 1.0,
-            "UNI": 8.50,
-            "LINK": 14.20,
-            "AAVE": 120.0,
-            "WETH": 3200.0,
-        }
-        return price_map.get(asset, 0.0)
+        if self._price_oracle is None:
+            raise RuntimeError(
+                f"Cannot fetch price for {asset}: no PriceOracle configured. "
+                f"The orchestrator must wire a PriceOracle into BasisAgent."
+            )
+
+        ts: int = 0
+        if isinstance(timestamp, str):
+            from datetime import datetime, timezone
+            try:
+                dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                ts = int(dt.timestamp())
+            except (ValueError, AttributeError):
+                ts = 0
+        elif isinstance(timestamp, int):
+            ts = timestamp
+
+        if ts > 0:
+            price = await self._price_oracle.get_historical_price(asset, ts)
+        else:
+            price = await self._price_oracle.get_price(asset)
+
+        if price <= 0:
+            raise RuntimeError(
+                f"PriceOracle returned $0.00 for {asset}. "
+                f"CoinGecko and Covalent APIs were both unable to resolve this asset."
+            )
+
+        return price
 
     @staticmethod
     def _parse_timestamp(ts: str) -> int:

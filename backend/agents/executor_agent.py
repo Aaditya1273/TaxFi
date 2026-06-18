@@ -221,6 +221,7 @@ class ExecutorAgent(BaseAgent):
         Estimate the relayer fee via 1Shot relayer estimate endpoint.
 
         Uses relayer_estimate7710Transaction to get a price-locked quote.
+        Raises RuntimeError if the relayer is unreachable or returns an error.
         """
         import aiohttp
 
@@ -248,37 +249,23 @@ class ExecutorAgent(BaseAgent):
             }],
         }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(relayer_url, json=payload) as resp:
-                    if resp.status != 200:
-                        # Fallback fee estimate
-                        return {
-                            "success": True,
-                            "fee_amount": "1000000",  # $1 USDC default
-                            "min_fee": "100000",       # $0.10 min
-                            "context": None,
-                            "quote_expiry": datetime.now(timezone.utc).timestamp() + 45,
-                        }
-                    data = await resp.json()
-                    result = data.get("result", {})
+        async with aiohttp.ClientSession() as session:
+            async with session.post(relayer_url, json=payload) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(
+                        f"1Shot relayer fee estimation failed (HTTP {resp.status}): {error_text}"
+                    )
+                data = await resp.json()
+                result = data.get("result", {})
 
-                    return {
-                        "success": result.get("success", True),
-                        "fee_amount": result.get("requiredPaymentAmount", "1000000"),
-                        "min_fee": result.get("minFee", "100000"),
-                        "context": result.get("context"),
-                        "quote_expiry": datetime.now(timezone.utc).timestamp() + 45,
-                    }
-        except Exception as e:
-            self.log("warn", f"Fee estimation failed, using default: {e}")
-            return {
-                "success": True,
-                "fee_amount": "1000000",
-                "min_fee": "100000",
-                "context": None,
-                "quote_expiry": datetime.now(timezone.utc).timestamp() + 45,
-            }
+                return {
+                    "success": result.get("success", True),
+                    "fee_amount": result.get("requiredPaymentAmount"),
+                    "min_fee": result.get("minFee"),
+                    "context": result.get("context"),
+                    "quote_expiry": datetime.now(timezone.utc).timestamp() + 45,
+                }
 
     async def _submit_to_relayer(
         self,
@@ -325,35 +312,25 @@ class ExecutorAgent(BaseAgent):
             }],
         }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(relayer_url, json=payload) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        return HarvestExecutionResult(
-                            success=False,
-                            error=f"Relayer error {resp.status}: {error_text}",
-                            memo=memo,
-                        )
-
-                    data = await resp.json()
-                    task_id = data.get("result")
-
-                    # Poll for completion (in production, use webhooks instead)
-                    execution = await self._poll_for_completion(
-                        relayer_url=relayer_url,
-                        task_id=task_id,
-                        session=session,
+        async with aiohttp.ClientSession() as session:
+            async with session.post(relayer_url, json=payload) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(
+                        f"1Shot relayer submission failed (HTTP {resp.status}): {error_text}"
                     )
-                    execution.memo = memo
-                    return execution
 
-        except Exception as e:
-            return HarvestExecutionResult(
-                success=False,
-                error=f"Submission failed: {str(e)}",
-                memo=memo,
-            )
+                data = await resp.json()
+                task_id = data.get("result")
+
+                # Poll for completion (in production, use webhooks instead)
+                execution = await self._poll_for_completion(
+                    relayer_url=relayer_url,
+                    task_id=task_id,
+                    session=session,
+                )
+                execution.memo = memo
+                return execution
 
     async def _poll_for_completion(
         self,
@@ -365,9 +342,13 @@ class ExecutorAgent(BaseAgent):
         """
         Poll relayer for task completion.
         In production, prefer webhooks over polling.
+
+        Raises RuntimeError if the relayer returns an error status
+        or if all polls fail with connection issues.
         """
         import asyncio
 
+        last_error: str | None = None
         for _ in range(max_polls):
             status_payload = {
                 "jsonrpc": "2.0",
@@ -379,35 +360,44 @@ class ExecutorAgent(BaseAgent):
             try:
                 async with session.post(relayer_url, json=status_payload) as resp:
                     if resp.status != 200:
+                        error_text = await resp.text()
+                        last_error = f"Relayer status check returned HTTP {resp.status}: {error_text}"
+                        await asyncio.sleep(2)
                         continue
+
                     data = await resp.json()
                     status_result = data.get("result", {})
 
                     status_code = status_result.get("status", -1)
-                    if status_code in (200, 400, 500):
-                        # Terminal status
-                        is_success = status_code == 200
+                    if status_code == 200:
                         return HarvestExecutionResult(
-                            success=is_success,
+                            success=True,
                             task_id=task_id,
                             tx_hash=status_result.get("hash"),
-                            usdc_out=0.0,  # Would be parsed from receipt
+                            usdc_out=0.0,
                             fee_paid=0.01,
-                            error=None if is_success else status_result.get("message"),
                             explorer_url=self.EXPLORER_URLS.get(
                                 "eip155:84532",
-                                f"https://sepolia.basescan.org/tx/{status_result.get('hash', '')}",
-                            ) if status_result.get("hash") else None,
+                            ) + status_result.get("hash", "") if status_result.get("hash") else None,
                         )
-            except Exception:
-                pass
+                    elif status_code in (400, 500):
+                        raise RuntimeError(
+                            f"Transaction {task_id} failed with status {status_code}: "
+                            f"{status_result.get('message', 'unknown error')}"
+                        )
+                    # Non-terminal status (100, 110) — keep polling
+                    await asyncio.sleep(2)
 
-            await asyncio.sleep(2)
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_error = f"Polling error: {e}"
+                await asyncio.sleep(2)
 
-        return HarvestExecutionResult(
-            success=False,
-            task_id=task_id,
-            error="Timeout waiting for execution",
+        # Timeout after max_polls
+        raise RuntimeError(
+            f"Transaction {task_id} did not complete after {max_polls} polls. "
+            f"Last status: {last_error or 'still pending'}"
         )
 
     async def _attest_harvest(

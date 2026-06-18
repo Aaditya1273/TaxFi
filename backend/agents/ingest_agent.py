@@ -163,19 +163,61 @@ class IngestAgent(BaseAgent):
         """Normalize raw transaction data into canonical format."""
         normalized = []
         for txn in raw_txns:
+            # ── Value normalization ──────────────────────────────────────
+            # Covalent returns values in the token's smallest unit (wei for ETH).
+            # We store amounts in human-readable units (ETH, not wei).
+            # Covalent also provides `transfers[].delta` or `value` in wei.
+            raw_value = txn.get("value", "0") or "0"
+            try:
+                raw_value_int = int(raw_value) if isinstance(raw_value, str) else int(raw_value)
+            except (ValueError, TypeError):
+                raw_value_int = 0
+
+            # Detect token decimals — default 18 for ETH/ERC-20
+            decimals = txn.get("contract_decimals", 18) or 18
+            try:
+                decimals = int(decimals)
+            except (ValueError, TypeError):
+                decimals = 18
+            human_value = raw_value_int / (10 ** decimals) if raw_value_int else 0.0
+
+            # ── Token symbol ──────────────────────────────────────────────
+            token_symbol = (
+                txn.get("contract_ticker_symbol")
+                or txn.get("from_currency_symbol")
+                or txn.get("to_currency_symbol")
+                or ""
+            ).strip()
+
+            # For native ETH transfers (no contract), use "ETH"
+            if not token_symbol:
+                if txn.get("from_address") or txn.get("from"):
+                    token_symbol = "ETH"
+                else:
+                    token_symbol = "UNKNOWN"
+
+            # ── Filter: skip zero-value and contract-deploy txns ──────────
+            if human_value == 0 and not txn.get("log_events") and not txn.get("transfers"):
+                # Likely a failed tx or contract deployment with no transfers
+                continue
+
+            method_name = ""
+            method_calls = txn.get("method_calls")
+            if isinstance(method_calls, list) and method_calls:
+                method_name = method_calls[0].get("name", "")
+
             normalized.append(
                 {
                     "chain_id": chain_id,
                     "tx_hash": txn.get("tx_hash") or txn.get("hash", ""),
                     "block_number": txn.get("block_height") or txn.get("blockNum", 0),
-                    "from_address": txn.get("from_address") or txn.get("from", ""),
-                    "to_address": txn.get("to_address") or txn.get("to", ""),
-                    "value": str(txn.get("value", "0")),
+                    "from_address": (txn.get("from_address") or txn.get("from", "")).lower(),
+                    "to_address": (txn.get("to_address") or txn.get("to", "")).lower(),
+                    # Store as human-readable token amount
+                    "value": human_value,
                     "token_address": txn.get("contract_address") or "",
-                    "token_symbol": txn.get("contract_ticker_symbol", ""),
-                    "method": txn.get("method_calls", [{}])[0].get("name", "")
-                    if isinstance(txn.get("method_calls"), list)
-                    else "",
+                    "token_symbol": token_symbol,
+                    "method": method_name,
                     "timestamp": txn.get("block_signed_at")
                     or txn.get("metadata", {}).get("blockTimestamp", ""),
                     "log_events": txn.get("log_events", []),
@@ -183,6 +225,8 @@ class IngestAgent(BaseAgent):
                     "gas_used": str(txn.get("gas_spent", "0")),
                     "gas_price": str(txn.get("gas_price", "0")),
                     "successful": txn.get("successful", True),
+                    # USD value from Covalent if available
+                    "value_usd": float(txn.get("value_quote", 0) or 0),
                 }
             )
         return normalized

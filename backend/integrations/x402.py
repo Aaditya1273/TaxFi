@@ -79,20 +79,27 @@ class X402Client:
                     payment_info = await resp.json()
 
                     if not self.wallet_key:
-                        raise Exception("x402 payment required but no wallet configured")
+                        raise RuntimeError(
+                            "x402 payment required but no wallet configured. "
+                            "Set X402_WALLET_KEY or VENICE_WALLET_KEY in your .env file."
+                        )
 
-                    payment_success = await self._send_payment(payment_info)
-                    if not payment_success:
-                        raise Exception(f"x402 payment failed for {url}")
+                    payment_result = await self._send_payment(payment_info)
+                    if not payment_result:
+                        raise RuntimeError(f"x402 payment failed for {url}")
 
-                    tx_hash = payment_success.get("tx_hash", "")
+                    tx_hash = payment_result.get("tx_hash", "")
+                    if not tx_hash:
+                        raise RuntimeError(f"x402 payment returned no transaction hash for {url}")
+
                     async with session.get(
                         url,
                         headers={"X-Payment-Proof": tx_hash},
                     ) as retry_resp:
                         if retry_resp.status != 200:
-                            raise Exception(
-                                f"x402 payment accepted but resource error: {retry_resp.status}"
+                            error_text = await retry_resp.text()
+                            raise RuntimeError(
+                                f"x402 payment accepted but resource error (HTTP {retry_resp.status}): {error_text}"
                             )
                         data = await retry_resp.json()
                         return retry_resp.status, data
@@ -102,9 +109,10 @@ class X402Client:
                     return resp.status, data
 
                 else:
-                    raise Exception(f"HTTP {resp.status} fetching {url}")
+                    error_text = await resp.text()
+                    raise RuntimeError(f"x402 HTTP {resp.status} fetching {url}: {error_text}")
 
-        raise Exception(f"x402 max retries ({max_retries}) exceeded for {url}")
+        raise RuntimeError(f"x402 max retries ({max_retries}) exceeded for {url}")
 
     async def serve_as_seller(
         self,
@@ -220,49 +228,68 @@ class X402Client:
         Checks:
         1. Payment proof is a valid transaction hash
         2. Verifies with the x402 facilitator endpoint
-        3. As fallback, checks onchain receipt via 1Shot or public RPC
 
         Raises:
-            PaymentVerificationError if the proof is invalid
+            RuntimeError if verification fails or facilitator is unreachable
         """
         if not payment_proof or len(payment_proof) < 10:
-            self._log("warn", "Invalid payment proof (too short)")
-            return False
+            raise RuntimeError(
+                f"Invalid payment proof: expected at least 10 characters, got {len(payment_proof) if payment_proof else 0}"
+            )
 
         # Verify with the x402 facilitator endpoint
         session = await self.get_session()
-        try:
-            async with session.post(
-                "https://api.x402.org/v1/verify",
-                json={"proof": payment_proof},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("verified", False)
-                self._log("warn", f"x402 facilitator returned {resp.status}")
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            self._log("warn", f"x402 facilitator unreachable: {e}")
-
-        # Fallback: verify onchain receipt via public RPC
-        try:
-            from web3 import Web3
-            w3 = Web3(Web3.HTTPProvider("https://mainnet.base.org"))
-            tx = w3.eth.get_transaction_receipt(payment_proof)
-            if tx and tx.get("status") == 1:
-                return True
-        except Exception as e:
-            self._log("warn", f"Onchain verification failed: {e}")
-
-        return False
+        async with session.post(
+            "https://api.x402.org/v1/verify",
+            json={"proof": payment_proof},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"x402 payment verification failed (HTTP {resp.status}): {error_text}"
+                )
+            data = await resp.json()
+            verified = data.get("verified", False)
+            if not verified:
+                raise RuntimeError(
+                    f"x402 facilitator reported payment proof as not verified: {payment_proof[:20]}..."
+                )
+            return True
 
     async def check_balance(self, wallet_address: str) -> float:
         """
-        Check USDC balance for x402 payments.
+        Check USDC balance for x402 payments via onchain RPC call.
+
+        Queries the USDC ERC-20 balanceOf() on Base mainnet
+        using eth_call to a public RPC endpoint.
+        Raises RuntimeError if the balance check fails.
         """
-        session = await self.get_session()
-        # In production, query USDC balance on Base
-        return 100.0
+        if not wallet_address:
+            raise RuntimeError("Cannot check balance: no wallet address provided")
+
+        # USDC on Base mainnet
+        usdc_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        base_rpc = "https://mainnet.base.org"
+
+        # ERC-20 balanceOf selector: 0x70a08231 + address padded to 32 bytes
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(base_rpc))
+
+        # Build balanceOf(address) call data
+        checksum_addr = w3.to_checksum_address(wallet_address)
+        balance_of_selector = "0x70a08231"
+        padded_address = checksum_addr[2:].lower().zfill(64)
+        call_data = balance_of_selector + padded_address
+
+        result = w3.eth.call({
+            "to": w3.to_checksum_address(usdc_address),
+            "data": call_data,
+        })
+
+        # USDC has 6 decimals
+        raw_balance = int(result.hex(), 16) if isinstance(result, bytes) else int(result, 16)
+        return raw_balance / 1_000_000
 
     async def close(self):
         if self._session and not self._session.closed:

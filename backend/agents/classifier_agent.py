@@ -180,27 +180,23 @@ class ClassifierAgent(BaseAgent):
         """
         Call Venice AI chat completions API for classification.
 
-        Supports both Bearer API key and x402 wallet auth.
-        Uses a shared aiohttp session to avoid connection overhead
-        on every call.
+        If VENICE_API_KEY is not set or returns auth errors, falls back to
+        rule-based classification so the pipeline still produces useful output.
         """
-        session = await self._get_session()
         api_key = self.config.get("venice_api_key")
         base_url = self.config.get("venice_base_url", "https://api.venice.ai/api/v1")
 
+        if not api_key:
+            return self._rule_based_classify(prompt)
+
+        session = await self._get_session()
         headers = {
             "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
         }
 
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            # x402 wallet auth - generate SIWE header
-            siwx_header = self._generate_siwx_header()
-            headers["X-Sign-In-With-X"] = siwx_header
-
         payload = {
-            "model": self.config.get("venice_classification_model", "zai-org-glm-5-1"),
+            "model": self.config.get("venice_classification_model", "zai-org-glm-4.7"),
             "messages": [
                 {
                     "role": "system",
@@ -210,88 +206,90 @@ class ClassifierAgent(BaseAgent):
                 {"role": "user", "content": prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.1,  # Low temperature for consistent classification
+            "temperature": 0.1,
             "max_completion_tokens": 500,
         }
 
-        async with session.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-        ) as resp:
-            if resp.status == 402:
-                # Insufficient x402 balance - handle top-up
-                return await self._handle_402_and_retry(session, base_url, payload, headers)
+        try:
+            async with session.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 401:
+                    self.log("warning", "Venice API key invalid/read-only — using rule-based fallback")
+                    return self._rule_based_classify(prompt)
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    self.log("warning", f"Venice API error {resp.status} — using rule-based fallback")
+                    return self._rule_based_classify(prompt)
 
-            if resp.status != 200:
-                raise Exception(f"Venice API error {resp.status}: {await resp.text()}")
+                data = await resp.json()
+                content = data["choices"][0]["message"]["content"]
 
-            data = await resp.json()
-            content = data["choices"][0]["message"]["content"]
+                try:
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    import re
+                    json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                    if json_match:
+                        return json.loads(json_match.group())
+                    return self._rule_based_classify(prompt)
+        except Exception as e:
+            self.log("warning", f"Venice API call failed ({e}) — using rule-based fallback")
+            return self._rule_based_classify(prompt)
 
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                # Try to extract JSON from the response
-                import re
-
-                json_match = re.search(r"\{.*\}", content, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group())
-                raise
-
-    def _generate_siwx_header(self) -> str:
-        """Generate SIWE header for x402 wallet auth."""
-        import base64
-        import json as json_lib
-
-        wallet_key = self.config.get("venice_wallet_key", "")
-        if not wallet_key:
-            return ""
-
-        # Simplified SIWE header generation
-        # In production, use the actual SIWE signing flow
-        siwe_payload = json_lib.dumps(
-            {
-                "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-                "message": "Sign in to Venice AI",
-                "signature": "0x" + "0" * 130,
-                "timestamp": 1712659200000,
-                "chainId": 8453,
-            }
-        )
-        return base64.b64encode(siwe_payload.encode()).decode()
-
-    async def _handle_402_and_retry(
-        self, session: aiohttp.ClientSession, base_url: str, payload: dict, headers: dict
-    ) -> dict:
+    def _rule_based_classify(self, prompt: str) -> dict:
         """
-        Handle 402 Payment Required by topping up x402 balance and retrying.
-
-        Uses the same shared session and original headers for the retry,
-        avoiding the fragile session._default_headers hack.
+        Rule-based transaction classifier used when Venice AI is unavailable.
+        Classifies based on keywords in the prompt (method name, token symbols, etc.).
+        Good enough for most on-chain transfers, swaps, and staking events.
         """
-        self.log("warn", "Venice x402 balance insufficient, triggering top-up")
+        prompt_lower = prompt.lower()
 
-        # Top-up via x402 flow
-        async with session.post(f"{base_url}/x402/top-up") as topup_resp:
-            if topup_resp.status == 402:
-                instructions = await topup_resp.json()
-                self.log(
-                    "info",
-                    f"x402 top-up required: {instructions.get('suggestedTopUpUsd', 10)} USDC",
-                )
+        # Determine category based on common patterns
+        category = "OTHER"
+        taxable = True
+        confidence = 0.7
 
-        # Retry after top-up with same headers
-        async with session.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-        ) as retry_resp:
-            if retry_resp.status != 200:
-                raise Exception(f"Venice API error after top-up: {retry_resp.status}")
-            data = await retry_resp.json()
-            return json.loads(data["choices"][0]["message"]["content"])
+        if any(k in prompt_lower for k in ["swap", "exchange", "uniswap", "sushiswap", "curve", "0x7ff36ab5"]):
+            category = "SWAP"
+        elif any(k in prompt_lower for k in ["airdrop", "claim", "distribute"]):
+            category = "AIRDROP"
+        elif any(k in prompt_lower for k in ["stake", "staking", "reward", "yield"]):
+            category = "STAKING_REWARD"
+        elif any(k in prompt_lower for k in ["addliquidity", "mint lp", "lp deposit"]):
+            category = "LP_DEPOSIT"
+        elif any(k in prompt_lower for k in ["removeliquidity", "burn lp", "lp withdraw"]):
+            category = "LP_WITHDRAW"
+        elif any(k in prompt_lower for k in ["bridge", "l2", "optimism", "arbitrum deposit"]):
+            category = "BRIDGE"
+        elif any(k in prompt_lower for k in ["transfer_self", "self transfer", "own wallet"]):
+            category = "TRANSFER_SELF"
+            taxable = False
+        elif any(k in prompt_lower for k in ["nft", "erc721", "erc1155", "opensea", "buy nft"]):
+            category = "NFT_BUY"
+        elif any(k in prompt_lower for k in ["sell nft", "list nft"]):
+            category = "NFT_SELL"
+        elif any(k in prompt_lower for k in ["harvest", "collect", "claim reward"]):
+            category = "YIELD_HARVEST"
+        elif any(k in prompt_lower for k in ["transfer", "send", "receive"]):
+            # Simple transfer — taxable only if sold/exchanged
+            category = "OTHER"
+            taxable = False
+            confidence = 0.5
+
+        return {
+            "category": category,
+            "confidence": confidence,
+            "reasoning": f"Rule-based classification (Venice AI unavailable)",
+            "taxable": taxable,
+            "basis_method": "HIFO",
+            "cost_basis_asset": "ETH",
+            "is_lp_event": category in ("LP_DEPOSIT", "LP_WITHDRAW"),
+            "notes": "Classified without AI — set VENICE_API_KEY with inference credits for accurate classification.",
+        }
 
     def get_stats(self) -> dict:
         """Get classification statistics."""

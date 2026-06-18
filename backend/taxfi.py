@@ -33,6 +33,7 @@ from backend.agents import (
 )
 from backend.config import TaxFiConfig, load_config
 from backend.database_factory import create_database
+from backend.integrations.price_oracle import PriceOracle
 
 logger = logging.getLogger("taxfi")
 
@@ -66,6 +67,16 @@ class TaxFiOrchestrator:
         self.loss_detector = LossDetector(self.config)
         self.executor = ExecutorAgent(self.config)
         self.form_generator = FormGenerator(self.config)
+
+        # Initialize the price oracle (CoinGecko free API + Alchemy/Covalent fallback)
+        self.price_oracle = PriceOracle(
+            alchemy_api_key=self.config.get("alchemy_api_key"),
+            covalent_api_key=self.config.get("covalent_api_key"),
+        )
+
+        # Wire the price oracle into the agents that need real market data
+        self.basis.set_price_oracle(self.price_oracle)
+        self.loss_detector.set_price_oracle(self.price_oracle)
 
         # Database (SQLite or PostgreSQL based on TAXFI_DB_TYPE env var)
         resolved_path = db_path or self.config.get("db_path", "~/.taxfi/taxfi.db")
@@ -105,7 +116,7 @@ class TaxFiOrchestrator:
                 if finished:
                     try:
                         self._last_scan_time = datetime.fromisoformat(finished)
-                    except ValueError, TypeError:
+                    except (ValueError, TypeError):
                         self._last_scan_time = None
                 result = last_run.get("result")
                 if result:
@@ -545,6 +556,7 @@ class TaxFiOrchestrator:
         """Clean up all shared aiohttp sessions and close the database."""
         await self.ingest.close()
         await self.classifier.close()
+        await self.price_oracle.close()
         await self.loss_detector.close()
         await self.db.close()
 

@@ -69,7 +69,7 @@ async def get_current_user(
         raise credentials_exception
 
 
-async def verify_ wallet_signature(
+async def verify_wallet_signature(
     request: Request,
     address: str,
     signature: str,
@@ -77,21 +77,20 @@ async def verify_ wallet_signature(
 ) -> bool:
     """
     Verify a wallet signature for non-custodial auth.
-    
-    In production, use web3.eth.Account.recover_message().
+
+    Uses eth_account to recover the signer from a signed message
+    and compares it against the claimed address.
     """
-    # This is a placeholder - implement proper signature verification
-    # using eth_account or web3
     try:
         from web3 import Web3
         from eth_account.messages import encode_defunct
-        
+
         w3 = Web3()
         message_hash = encode_defunct(text=message)
         recovered = w3.eth.account.recover_message(message_hash, signature=signature)
         return recovered.lower() == address.lower()
-    except Exception:
-        return False
+    except Exception as e:
+        raise RuntimeError(f"Wallet signature verification failed: {e}")
 
 
 class RateLimitExceeded(HTTPException):

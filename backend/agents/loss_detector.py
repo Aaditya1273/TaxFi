@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from backend.integrations.price_oracle import PriceOracle
 from .base_agent import BaseAgent, AgentResult
 
 
@@ -98,6 +99,11 @@ class LossDetector(BaseAgent):
         super().__init__("LossDetector", config)
         self.opportunities: list[HarvestOpportunity] = []
         self._session: Optional[aiohttp.ClientSession] = None
+        self._price_oracle: Optional[PriceOracle] = None
+
+    def set_price_oracle(self, oracle: PriceOracle) -> None:
+        """Set the price oracle for fetching real market prices."""
+        self._price_oracle = oracle
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a reusable aiohttp session."""
@@ -365,13 +371,15 @@ class LossDetector(BaseAgent):
         """
         Fetch current market prices for all assets tracked in BasisAgent ledgers.
 
+        Uses the PriceOracle (CoinGecko free API + Alchemy fallback) with
+        in-memory caching to get real, live prices. No hardcoded price maps.
+
         Dynamically extracts asset symbols from the cost basis data so we
         never hardcode which assets the user holds.
-        Uses the shared aiohttp session.
         """
         # Collect unique asset symbols from the ledgers
         ledgers = cost_basis_data.get("ledgers", {})
-        assets = set()
+        assets: set[str] = set()
         for asset, ledger_data in ledgers.items():
             if isinstance(ledger_data, dict):
                 assets.add(asset)
@@ -381,30 +389,24 @@ class LossDetector(BaseAgent):
         if not assets:
             return {}
 
-        prices: dict[str, float] = {}
-
-        # Try fetching from price API first
-        api_key = self.config.get("covalent_api_key") or self.config.get("coingecko_api_key")
-        if api_key:
-            symbols_param = ",".join(a.lower() for a in assets)
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={symbols_param}&vs_currencies=usd"
+        # Use PriceOracle if available
+        if self._price_oracle is not None:
+            self.log("info", f"Fetching live market prices for {len(assets)} assets via PriceOracle")
             try:
-                session = await self._get_session()
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        for asset_id, quote in data.items():
-                            if "usd" in quote:
-                                prices[asset_id.upper()] = float(quote["usd"])
-            except Exception:
-                pass  # Fall through to fallback prices below
+                prices = await self._price_oracle.refresh_all_prices(list(assets))
+                found = {k: v for k, v in prices.items() if v > 0}
+                if found:
+                    self.log("info", f"Got prices for {len(found)}/{len(assets)} assets")
+                    return prices
+                self.log("warn", f"PriceOracle returned zero prices for all {len(assets)} assets")
+            except Exception as e:
+                self.log("error", f"PriceOracle failed: {e}")
 
-        if not prices:
-            self.log("warn", f"No market prices available for {assets} —"
-                     f" cannot calculate harvest opportunities")
-            prices = {a: 0.0 for a in assets}
-
-        return prices
+        # No price oracle — warn and return zeros
+        self.log("warn", f"No market prices available for {assets} —"
+                 f" cannot calculate harvest opportunities. "
+                 f"The PriceOracle will initialize on next scan.")
+        return {a: 0.0 for a in assets}
 
     async def close(self):
         """Close the shared aiohttp session."""

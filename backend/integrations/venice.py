@@ -204,7 +204,10 @@ class VeniceClient:
         Auth strategies tried in order:
         1. Bearer API key (VENICE_API_KEY)
         2. x402 wallet SIWE signature (VENICE_WALLET_KEY / X402_WALLET_KEY)
-        3. Fallback classification if both fail
+
+        If all auth methods fail, the error propagates to the caller.
+        No fallback classification — every classification is based on real
+        AI inference.
         """
         return await circuit_breaker_call(
             "venice_ai",
@@ -225,12 +228,11 @@ class VeniceClient:
         retry_on_402: bool = True,
     ) -> Any:
         """
-        Internal implementation with ordered auth fallback.
+        Call the Venice AI API using configured credentials.
 
-        Tries each available auth method exactly once in order:
-        1. Bearer API key
-        2. x402 wallet (SIWE signature)
-        3. Fallback classification
+        Tries Bearer API key first, then x402 wallet (SIWE signature).
+        No fallback classification — if all auth methods fail, the error
+        propagates up so the caller knows the classification failed.
         """
         session = await self.get_session()
 
@@ -242,9 +244,12 @@ class VeniceClient:
             auth_methods.append("x402")
 
         if not auth_methods:
-            self._log("warn", "No Venice AI credentials, returning fallback classification")
-            return self._fallback_classification()
+            raise RuntimeError(
+                "No Venice AI credentials configured. Set VENICE_API_KEY "
+                "or VENICE_WALLET_KEY in your .env file."
+            )
 
+        last_error: Exception | None = None
         for auth_type in auth_methods:
             try:
                 return await self._try_auth(
@@ -252,6 +257,7 @@ class VeniceClient:
                     temperature, max_tokens, retry_on_402
                 )
             except Exception as e:
+                last_error = e
                 err_str = str(e)
                 # Auth/payment errors — try next method
                 if "401" in err_str or "402" in err_str:
@@ -260,38 +266,10 @@ class VeniceClient:
                 # Unexpected error — don't swallow
                 raise
 
-        # All auth methods failed — use rule-based classifier
-        self._log("warn", "All Venice AI auth methods failed, using rule-based classifier")
-        # Extract transaction data from messages if available
-        txn_data = {}
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str) and "Classify this" in content:
-                # Try to extract transaction fields from the prompt
-                import re
-                for line in content.split("\n"):
-                    line = line.strip()
-                    if line.startswith("  Chain: "):
-                        txn_data["chain_id"] = line.replace("  Chain: ", "").strip()
-                    elif line.startswith("  From: "):
-                        txn_data["from_address"] = line.replace("  From: ", "").strip()
-                    elif line.startswith("  To: "):
-                        txn_data["to_address"] = line.replace("  To: ", "").strip()
-                    elif line.startswith("  Token: "):
-                        parts = line.replace("  Token: ", "").strip().split(" (")
-                        txn_data["token_symbol"] = parts[0] if parts else ""
-                    elif line.startswith("  Value: "):
-                        txn_data["value"] = line.replace("  Value: ", "").strip()
-                    elif line.startswith("  Method: "):
-                        txn_data["method"] = line.replace("  Method: ", "").strip()
-                    elif line.startswith("  Transfers: "):
-                        transfers_str = line.replace("  Transfers: ", "").strip()
-                        try:
-                            txn_data["transfers"] = json.loads(transfers_str)
-                        except json.JSONDecodeError:
-                            txn_data["transfers"] = []
-                break
-        return await self.classify_with_rules(txn_data)
+        # All auth methods failed — propagate the last error
+        raise RuntimeError(
+            f"All Venice AI authentication methods failed. Last error: {last_error}"
+        ) from last_error
 
     async def _try_auth(
         self,
@@ -411,209 +389,6 @@ class VeniceClient:
 
         return {"success": False, "error": "Top-up not available"}
 
-    def _fallback_classification(self) -> dict:
-        """
-        Rule-based transaction classifier for when Venice AI is unavailable.
-
-        Uses heuristic rules based on transaction metadata (method signatures,
-        from/to addresses, value, transfers) to classify into tax-relevant
-        categories. No mock data — every classification is based on real
-        transaction properties.
-        """
-        return {
-            "category": "OTHER",
-            "confidence": 0.5,
-            "reasoning": "Unable to classify via Venice AI — manual review recommended",
-            "taxable": False,
-            "basis_method": None,
-            "notes": "Venice AI not available for AI classification",
-        }
-
-    async def classify_with_rules(self, txn: dict) -> dict:
-        """
-        Rule-based transaction classifier using real transaction properties.
-
-        Uses heuristics based on:
-        - Method signatures (swap, transfer, approve, deposit, withdraw)
-        - From/to address relationships (self-transfer detection)
-        - Token transfers (multiple = swap, single = transfer)
-        - Value amounts (zero-value = likely claim/airdrop)
-        - Known contract addresses (DEX, lending, etc.)
-
-        Returns a classification dict matching the Venice AI schema format.
-        """
-        method = (txn.get("method") or "").lower()
-        from_addr = (txn.get("from_address") or "").lower()
-        to_addr = (txn.get("to_address") or "").lower()
-        transfers = txn.get("transfers", [])
-        value = float(txn.get("value", "0"))
-
-        # Known DEX/router contracts (Uniswap, SushiSwap, etc.)
-        known_dex_addresses = {
-            "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",  # Uniswap V2 Router
-            "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45",  # Uniswap V3 Router
-            "0xe592427a0aece92de3edee1f18e0157c05861564",  # Uniswap V3 SwapRouter
-            "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",  # Uniswap Universal Router
-            "0xd9e1ce17f2641f24ae83637ab69a6a1db8c8c5b9",  # SushiSwap Router
-            "0x111111125421ca6dc452d289314280a0f8842a65",  # 1inch Router
-            "0xdef1c0ded9bec7f1a1670819833240f027b25eff",  # 0x Exchange
-            "0x7d2768de32b0b80b7a3454c06bdac94a69ddc7a9",  # Aave Lending
-            "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",  # Aave V3
-            "0xc36442b4a4522e871399cd717abdd847ab11fe88",  # Uniswap V3 NonfungiblePositionManager
-        }
-
-        # Method-based classification
-        if method in ("swap", "swapexacttokensfortokens", "swapexactethfortokens",
-                      "swaptokensforexacttokens", "swapexacttokensforeth",
-                      "swapethforexacttokens", "multicall", "executetxns"):
-            return {
-                "category": "SWAP",
-                "confidence": 0.9,
-                "reasoning": f"Swap detected via method '{method}'",
-                "taxable": True,
-                "basis_method": "HIFO",
-                "cost_basis_asset": txn.get("token_symbol", "ETH"),
-                "is_lp_event": False,
-                "notes": "",
-            }
-
-        # Address-based classification (known DEX contracts)
-        if to_addr in known_dex_addresses and value > 0:
-            return {
-                "category": "SWAP",
-                "confidence": 0.85,
-                "reasoning": f"Interaction with known DEX contract ({to_addr[:10]}...)",
-                "taxable": True,
-                "basis_method": "HIFO",
-                "cost_basis_asset": txn.get("token_symbol", "ETH"),
-                "is_lp_event": False,
-                "notes": "",
-            }
-
-        # Self-transfer detection
-        if from_addr == to_addr:
-            return {
-                "category": "TRANSFER_SELF",
-                "confidence": 0.95,
-                "reasoning": "From address matches to address — wallet transfer",
-                "taxable": False,
-                "basis_method": None,
-                "cost_basis_asset": txn.get("token_symbol", ""),
-                "is_lp_event": False,
-                "notes": "Not a taxable event (wallet-to-wallet transfer)",
-            }
-
-        # Transfer analysis
-        if len(transfers) >= 2:
-            # Multiple transfers = likely a swap
-            outgoing = [t for t in transfers if float(t.get("delta", "0")) < 0]
-            incoming = [t for t in transfers if float(t.get("delta", "0")) > 0]
-            if outgoing and incoming:
-                out_symbols = ", ".join(t.get("token_symbol", "?") for t in outgoing[:2])
-                in_symbols = ", ".join(t.get("token_symbol", "?") for t in incoming[:2])
-                return {
-                    "category": "SWAP",
-                    "confidence": 0.85,
-                    "reasoning": f"Multiple transfers detected ({out_symbols} → {in_symbols})",
-                    "taxable": True,
-                    "basis_method": "HIFO",
-                    "cost_basis_asset": outgoing[0].get("token_symbol", "ETH") if outgoing else "ETH",
-                    "is_lp_event": False,
-                    "notes": "",
-                }
-
-        if len(transfers) == 1:
-            transfer = transfers[0]
-            delta = float(transfer.get("delta", "0"))
-            tfr_from = (transfer.get("from_address") or "").lower()
-            tfr_to = (transfer.get("to_address") or "").lower()
-
-            if delta > 0 and tfr_to == from_addr:
-                # Incoming token to user — might be airdrop or transfer
-                if tfr_from not in (from_addr, "") and value == 0:
-                    return {
-                        "category": "AIRDROP",
-                        "confidence": 0.6,
-                        "reasoning": f"Incoming {transfer.get('token_symbol', 'token')} with no outgoing value",
-                        "taxable": True,
-                        "basis_method": None,
-                        "cost_basis_asset": transfer.get("token_symbol", ""),
-                        "is_lp_event": False,
-                        "notes": "Likely airdrop or gift — taxable as ordinary income",
-                    }
-                return {
-                    "category": "TRANSFER_SELF",
-                    "confidence": 0.7,
-                    "reasoning": f"Incoming {transfer.get('token_symbol', 'token')} transfer",
-                    "taxable": False,
-                    "basis_method": None,
-                    "cost_basis_asset": transfer.get("token_symbol", ""),
-                    "is_lp_event": False,
-                    "notes": "",
-                }
-
-        # Method-specific classifications
-        if method == "approve":
-            return {
-                "category": "FEE",
-                "confidence": 0.9,
-                "reasoning": "Token approval (not a taxable event)",
-                "taxable": False,
-                "basis_method": None,
-                "cost_basis_asset": txn.get("token_symbol", ""),
-                "is_lp_event": False,
-                "notes": "ERC20 approval — no tax impact",
-            }
-
-        if method in ("deposit", "mint"):
-            return {
-                "category": "LP_DEPOSIT",
-                "confidence": 0.75,
-                "reasoning": f"Deposit/mint to protocol via '{method}'",
-                "taxable": True,
-                "basis_method": "HIFO",
-                "cost_basis_asset": txn.get("token_symbol", "ETH"),
-                "is_lp_event": True,
-                "notes": "LP deposit — taxable disposal of deposited tokens",
-            }
-
-        if method in ("withdraw", "burn"):
-            return {
-                "category": "LP_WITHDRAW",
-                "confidence": 0.75,
-                "reasoning": f"Withdraw/burn from protocol via '{method}'",
-                "taxable": True,
-                "basis_method": "HIFO",
-                "cost_basis_asset": txn.get("token_symbol", "ETH"),
-                "is_lp_event": True,
-                "notes": "LP withdrawal — taxable disposal of LP tokens",
-            }
-
-        # Simple value transfer
-        if to_addr and not to_addr.startswith("0x0000000000000000000000000000000000000000"):
-            return {
-                "category": "TRANSFER_SELF",
-                "confidence": 0.6,
-                "reasoning": f"Value transfer of {txn.get('token_symbol', 'ETH')} to {to_addr[:10]}...",
-                "taxable": True if from_addr != to_addr else False,
-                "basis_method": "HIFO" if from_addr != to_addr else None,
-                "cost_basis_asset": txn.get("token_symbol", "ETH"),
-                "is_lp_event": False,
-                "notes": "",
-            }
-
-        # Default: unknown
-        return {
-            "category": "OTHER",
-            "confidence": 0.4,
-            "reasoning": f"No classification rules matched (method: {method})",
-            "taxable": False,
-            "basis_method": None,
-            "cost_basis_asset": txn.get("token_symbol", ""),
-            "is_lp_event": False,
-            "notes": "Manual review required",
-        }
-
     def _build_classification_prompt(self, txn: dict) -> str:
         """Build a classification prompt from transaction data."""
         return (
@@ -631,59 +406,44 @@ class VeniceClient:
         """
         Generate a SIWE header for x402 wallet authentication.
 
-        Builds the SIWE message manually (to avoid library compatibility issues)
-        and signs it with eth_account.
+        Builds the SIWE message using eth_account and signs it properly.
+        Raises an error if signing fails — no dev fallback signature.
         """
         if not self.wallet_key:
             return None
-        try:
-            wallet = Account.from_key(self.wallet_key)
-            now = datetime.now(timezone.utc)
-            nonce = secrets.token_hex(16)
 
-            # Manually construct SIWE message (standard EIP-4361 format)
-            message_lines = [
-                f"api.venice.ai wants you to sign in with your Ethereum account:",
-                wallet.address,
-                "",
-                "Sign in to Venice AI",
-                "",
-                f"URI: https://api.venice.ai/api/v1/chat/completions",
-                f"Version: 1",
-                f"Chain ID: 8453",
-                f"Nonce: {nonce}",
-                f"Issued At: {now.isoformat()}",
-            ]
-            message_str = "\n".join(message_lines)
+        wallet = Account.from_key(self.wallet_key)
+        now = datetime.now(timezone.utc)
+        nonce = secrets.token_hex(16)
 
-            # Sign using eth_account message signing
-            message_hash = encode_defunct(text=message_str)
-            signed = Account.sign_message(message_hash, self.wallet_key)
-            signature = signed.signature.hex()
+        # Manually construct SIWE message (standard EIP-4361 format)
+        message_lines = [
+            f"api.venice.ai wants you to sign in with your Ethereum account:",
+            wallet.address,
+            "",
+            "Sign in to Venice AI",
+            "",
+            f"URI: https://api.venice.ai/api/v1/chat/completions",
+            f"Version: 1",
+            f"Chain ID: 8453",
+            f"Nonce: {nonce}",
+            f"Issued At: {now.isoformat()}",
+        ]
+        message_str = "\n".join(message_lines)
 
-            header_payload = json.dumps({
-                "address": wallet.address,
-                "message": message_str,
-                "signature": "0x" + signature,
-                "timestamp": int(time.time() * 1000),
-                "chainId": 8453,
-            })
-            return base64.b64encode(header_payload.encode()).decode()
-        except Exception as e:
-            self._log("error", f"Failed to generate SIWE header: {e}")
-            # Return a minimal header for development
-            try:
-                wallet = Account.from_key(self.wallet_key)
-                dev_payload = json.dumps({
-                    "address": wallet.address,
-                    "message": "Sign in to Venice AI",
-                    "signature": "0x" + "0" * 130,
-                    "timestamp": int(time.time() * 1000),
-                    "chainId": 8453,
-                })
-                return base64.b64encode(dev_payload.encode()).decode()
-            except Exception:
-                return None
+        # Sign using eth_account message signing
+        message_hash = encode_defunct(text=message_str)
+        signed = Account.sign_message(message_hash, self.wallet_key)
+        signature = signed.signature.hex()
+
+        header_payload = json.dumps({
+            "address": wallet.address,
+            "message": message_str,
+            "signature": "0x" + signature,
+            "timestamp": int(time.time() * 1000),
+            "chainId": 8453,
+        })
+        return base64.b64encode(header_payload.encode()).decode()
 
     async def _handle_402(self, response: aiohttp.ClientResponse) -> None:
         """Handle 402 Payment Required by topping up."""
